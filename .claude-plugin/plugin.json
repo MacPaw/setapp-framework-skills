@@ -1,0 +1,19 @@
+{
+  "name": "setapp-skills",
+  "description": "Agent skills for integrating the Setapp Framework and Setapp AI+ into macOS apps.",
+  "version": "1.1.0",
+  "author": {
+    "name": "MacPaw",
+    "url": "https://github.com/MacPaw"
+  },
+  "homepage": "https://github.com/MacPaw/setapp-framework-skills",
+  "repository": "https://github.com/MacPaw/setapp-framework-skills",
+  "keywords": [
+    "setapp",
+    "macos",
+    "swift",
+    "xcode",
+    "licensing",
+    "ai"
+  ]
+}
