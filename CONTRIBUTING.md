@@ -2,6 +2,10 @@
 
 These skills are only as good as the pitfalls they encode. If you hit something the checklist missed, that's the highest-value contribution.
 
+## License
+
+This repository is [Apache License 2.0](LICENSE). By submitting a pull request, you agree your contribution is licensed under the same terms (Apache-2.0 §5, "Submission of Contributions") — no separate agreement needed. Merging is at MacPaw's discretion; rejected changes remain yours to keep in your own fork.
+
 ## What to change
 
 - **A new pitfall** — add it to the relevant `## Common Pitfalls` list and, if it belongs in the flow, to the matching step.
