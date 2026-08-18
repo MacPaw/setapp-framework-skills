@@ -53,9 +53,20 @@ If using a standard Xcode project: Duplicate the existing macOS target and renam
 Add the Setapp Framework via Swift Package Manager:
 
 - **URL:** `https://github.com/MacPaw/Setapp-framework.git`
-- **Version:** From `5.1.0` (or latest — check GitHub releases)
+- **Version:** From `5.3.6` (latest as of 2026-08-18 — always check [releases](https://github.com/MacPaw/Setapp-framework/releases))
 
-> **Version note:** `5.1.0` is the floor for a plain licensing integration. If the app will use Setapp AI+ credit balances (`SetappManager.shared.ai.credits`), pin **5.3.3 or newer** — see the `setapp-ai` skill. When in doubt, take the latest release.
+> **Version floors.** `5.1.0` still works for plain licensing, but take the latest unless you have a reason not to. Features gated on newer releases:
+>
+> | Need | Minimum |
+> |---|---|
+> | Plain licensing / activation | 5.1.0 |
+> | AI image generation & editing | 5.1.0 |
+> | AI audio transcription | 5.2.0 |
+> | AI video generation | 5.3.0 |
+> | AI credit balances (`ai.credits`) | 5.3.3 |
+> | Cached credit balances (`forceUpdate:`) | 5.3.6 |
+>
+> **Breaking change in 5.3.6:** `requestAuthorizationCode` no longer takes a `scope` argument — the framework now applies the `application.access` scope itself, and `VendorAuthorizationScope` / `SCVendorAppScope` are no longer public. If the app calls it, change to `requestAuthorizationCode(clientID:completionHandler:)`.
 
 If the project uses `Package.swift`:
 
@@ -64,7 +75,7 @@ dependencies: [
     .package(
         name: "Setapp",
         url: "https://github.com/MacPaw/Setapp-framework.git",
-        from: "5.1.0"
+        from: "5.3.6"
     )
 ]
 ```
@@ -75,7 +86,7 @@ If using xcodegen (`project.yml`):
 packages:
   Setapp:
     url: https://github.com/MacPaw/Setapp-framework.git
-    from: "5.1.0"
+    from: "5.3.6"
 ```
 
 Link only to the Setapp target:
@@ -98,6 +109,8 @@ OTHER_LDFLAGS: "$(inherited) -force_load $(BUILT_PRODUCTS_DIR)/libSetapp.a"
 
 **Verify:** Check `Package.resolved` contains `Setapp-framework`.
 
+> **Resource bundle.** From 5.0.0, `SetappFramework-Resources.bundle` is required for both macOS and iOS apps that use the Setapp AI API — it carries the activation UI's localized strings and assets. SPM and CocoaPods pull it in for you. If you integrate manually or via Carthage, download it from the [release assets](https://github.com/MacPaw/Setapp-framework/releases/latest) and add it to Copy Bundle Resources. (Before 5.0.0 it was iOS-only and named `SetappFramework-Resources-iOS.bundle`.)
+
 ### Step 4: Bundle ID
 
 The Setapp bundle ID **must** use the `-setapp` suffix:
@@ -108,7 +121,17 @@ The Setapp bundle ID **must** use the `-setapp` suffix:
 
 Example: `com.macpaw.agentodo-setapp`
 
-This is set once in the Setapp developer account and **cannot be changed**. The Xcode target's bundle ID must match exactly.
+If the app ships **additional executables** (helpers, menu bar agents, XPC services, login items), each one extends the Setapp bundle ID:
+
+```
+<domain>.<companyName>.<appName>-setapp.<executableName>
+```
+
+Example: `com.macpaw.cleanmymac-setapp.Menu`
+
+This is set once in the Setapp developer account and **cannot be changed**. The Xcode target's bundle ID must match exactly. Use only the hyphen-minus character (U+002D) — an option-key en dash looks identical and will not match. Never put a version number in the bundle ID.
+
+Reference: https://docs.setapp.com/docs/set-an-app-bundle-id
 
 > **App Store Connect note:** When creating the App ID / app record for the Setapp build (needed for notarization), Apple requires unique app names per account. If you already have an App Store app with the same name, use a variant like "AppName (Setapp)" or "AppName for Setapp" for the App Store Connect record. This is only the internal record name — `CFBundleDisplayName` can still match the original app name.
 
@@ -240,29 +263,60 @@ Optionally, add an on-demand menu item:
 
 ### Step 11: Archive Packaging for Submission
 
-Setapp has specific requirements for the zip archive you upload:
+Setapp has specific requirements for the zip archive you upload.
 
-**Archive structure:**
+**Archive structure** — the app in the zip root, or in a single nested directory:
+
 ```
-AppName.zip
-├── AppName.app
-└── AppName.png       ← REQUIRED: separate icon file
+AppName.zip                 AppName.zip
+├── AppName.app       or    └── SomeDirectory
+└── AppIcon.png                 ├── AppName.app
+                                └── AppIcon.png
 ```
 
 **Icon requirements:**
-- PNG format, at least 512x512px (1024x1024 recommended)
-- Named exactly `<AppName>.png` (must match the `.app` name)
-- Placed **alongside** the `.app` in the zip root, NOT inside the bundle
-- Setapp reads the icon from the archive, not from the app's Assets.car or .icns
+- The file must be named exactly **`AppIcon.png`**. Not `<AppName>.png` — Setapp's uploader only accepts `AppIcon.png`, and a name-matched file is rejected.
+- **1024 × 1024 pixels**, PNG.
+- Design placed inside an 824 × 824 frame with a 100px margin, corners curved — follow [Apple's app icon guidance](https://developer.apple.com/design/human-interface-guidelines/app-icons).
+- Sits **alongside** the `.app`, not inside the bundle. Setapp reads the icon from the archive, not from `Assets.car` or the `.icns`.
+
+> **Xcode won't export a 1024px standalone icon by default.** It caps extraction at 256 × 256, so the icon you ship is silently too small. Set Build Settings > Asset Catalog Compiler - Options > **Standalone Icon File Behaviour** to `All`, or in an xcconfig:
+>
+> ```
+> ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = all
+> ```
 
 **Archive rules:**
-- No `__MACOSX` folders (use `zip -r` from command line, not Finder compress)
-- App must be in root directory or single nested directory
-- Bundle size cannot exceed 1 GB
+- No `__MACOSX` folders. Do not compress from Finder's context menu — it adds hidden metadata. Use `ditto` or `zip -r` from the command line.
+- Bundle size cannot exceed 1 GB.
+- The unpacked archive must contain exactly one root directory holding the `.app`, with no extra metadata folders.
+
+Verify before uploading:
+
+```bash
+/usr/bin/ditto -x -k AppName.zip /tmp/verify && find /tmp/verify -maxdepth 2
+```
+
+If `__MACOSX` appears, the archive was packed wrong — rebuild it.
+
+**Required `Info.plist` keys in the submitted bundle:**
+
+| Key | Note |
+|---|---|
+| `CFBundleIdentifier` | Must match the ID registered in the portal |
+| `CFBundleName` | |
+| `CFBundleIconFile` | The `.icns` may contain icons below 512px; the standalone `AppIcon.png` is what Setapp displays |
+| `CFBundleVersion` | |
+| `CFBundleShortVersionString` | |
+| `NSUpdateSecurityPolicy` | See Step 5 |
 
 **Signing:**
-- App must be **signed with Developer ID certificate** (not App Store distribution)
-- App must be **notarized** by Apple
+- Signed with a **Developer ID certificate** (not App Store distribution)
+- **Notarized** by Apple
+
+**Automated upload (optional).** Setapp supports CI upload three ways: the [build upload API](https://docs.setapp.com/reference/post_version-1), a [shell script template](https://github.com/MacPaw/fastlane-plugin-setapp/blob/main/lib/fastlane/plugin/setapp/helper/setapp_build_uploader.sh), or the [Fastlane plugin](https://github.com/MacPaw/fastlane-plugin-setapp). All need a Setapp Automation token — request it from your Developer Support Representative.
+
+Reference: https://docs.setapp.com/docs/submitting-apps-for-review
 
 ### Step 12: Developer Portal Registration
 
@@ -278,10 +332,15 @@ Without portal registration, the Setapp desktop client won't recognize the app, 
 
 Before finalising the submission, fetch the latest Setapp review guidelines to catch any policy changes that may have occurred since this skill was last updated.
 
-Fetch these two pages (using the WebFetch tool or equivalent) and read them:
+**Setapp's docs are agent-readable.** Two things make this cheap and reliable:
 
-- https://docs.setapp.com/docs/preparing-your-application-for-setapp
-- https://docs.setapp.com/docs/setapp-review-guidelines
+- `https://docs.setapp.com/llms.txt` is a complete index of every docs page. Fetch it first to discover pages this skill doesn't know about.
+- Any docs page serves clean Markdown by appending `.md` to its URL — e.g. `https://docs.setapp.com/docs/review-guidelines.md`. Prefer the `.md` form; the HTML is a JS app and fetches poorly.
+
+Fetch these two pages and read them:
+
+- https://docs.setapp.com/docs/preparing-your-application-for-setapp.md
+- https://docs.setapp.com/docs/review-guidelines.md
 
 Then compare the fetched requirements against the Step 15 checklist below. Specifically look for:
 
@@ -298,7 +357,9 @@ If the fetched guidelines contain requirements not covered in Step 15, add them 
     Action required: [describe what the developer needs to verify or change]
 ```
 
-If the page cannot be fetched (network issue, 403, etc.), note this and proceed — the static checklist in Step 15 is a good baseline but the developer should verify manually before submission.
+Also re-check the pinned SDK version against https://github.com/MacPaw/Setapp-framework/releases — release notes are where breaking API changes surface first (the `requestAuthorizationCode` scope removal in 5.3.6, for example, appeared there before anywhere else).
+
+If a page cannot be fetched (network issue, 403, etc.), note this and proceed — the static checklist in Step 15 is a good baseline, but the developer should verify manually before submission.
 
 ### Step 14: Review Compliance Scan
 
@@ -401,7 +462,9 @@ Before submitting to Setapp, verify:
 - [ ] `MPSupportedArchitectures` is in Info.plist
 - [ ] Sandbox Mach exception (`com.setapp.ProvisioningService`) is in entitlements (if sandboxed)
 - [ ] Usage reporting is configured for the app type
-- [ ] Archive includes `AppName.png` icon alongside `.app`
+- [ ] Archive includes a **1024×1024 `AppIcon.png`** alongside the `.app` (exact filename)
+- [ ] Archive unpacks with `ditto -x -k` to a single root dir, no `__MACOSX`
+- [ ] `Info.plist` has CFBundleIdentifier, CFBundleName, CFBundleIconFile, CFBundleVersion, CFBundleShortVersionString
 - [ ] Release notes text prepared (max 5,000 characters)
 - [ ] Bundle ID registered in Setapp developer portal
 - [ ] Live guidelines check (Step 13) completed — no new policy items outstanding
@@ -427,9 +490,18 @@ Reference: https://docs.setapp.com/docs/testing-your-application
 1. **`SetappManager.shared.start()` on macOS** — Does not compile on macOS v5.1.0. The framework auto-initializes. Only iOS needs explicit `start()`.
 2. **Wrong Mach service name** — Must be `com.setapp.ProvisioningService`, not any SetappAgent variant.
 3. **xcodegen overwriting Info.plist** — Never use `info: path:` block for the Setapp target; it overwrites the file on every generate.
-4. **Missing icon in archive** — Setapp reads the icon from the zip root, not from the app bundle.
+4. **Icon named after the app** — the standalone icon must be `AppIcon.png` exactly, 1024×1024, in the zip next to the `.app`. Naming it `<AppName>.png` fails the upload, and Xcode caps standalone icon export at 256px unless `ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = all`.
 5. **App name collision in App Store Connect** — Use "AppName (Setapp)" for the ASC record name.
-6. **SPM version** — Use 5.1.0+, not 4.2.1 (older versions may be missing APIs).
+6. **Finder-compressed archive** — right-click > Compress adds `__MACOSX`, which fails validation. Pack with `ditto`/`zip -r` and verify by unpacking.
+7. **SPM version** — The docs' install page still shows `from: "4.2.1"`; that's stale. Use 5.3.6 (or current latest). Older pins silently lack the AI, credits, and image/audio/video APIs.
+
+## Reference
+
+- [Docs index for agents (`llms.txt`)](https://docs.setapp.com/llms.txt) — append `.md` to any docs URL for clean Markdown
+- [App requirements](https://docs.setapp.com/docs/preparing-your-application-for-setapp) · [Review guidelines](https://docs.setapp.com/docs/review-guidelines)
+- [Set an app bundle ID](https://docs.setapp.com/docs/set-an-app-bundle-id) · [Sandbox exception](https://docs.setapp.com/docs/add-sandbox-temporary-exception-entitlement) · [Supported architectures](https://docs.setapp.com/docs/specify-supported-architectures)
+- [Usage reporting](https://docs.setapp.com/docs/implement-usage-reporting) · [Submitting apps for review](https://docs.setapp.com/docs/submitting-apps-for-review) · [Testing](https://docs.setapp.com/docs/testing-your-application)
+- [Integration troubleshooting](https://docs.setapp.com/docs/integration-troubleshooting) · [Framework releases](https://github.com/MacPaw/Setapp-framework/releases) · [Developer portal](https://developer.setapp.com/applications)
 
 ## What's Next
 

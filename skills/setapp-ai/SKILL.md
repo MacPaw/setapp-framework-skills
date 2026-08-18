@@ -1,13 +1,17 @@
 ---
 name: setapp-ai
-description: Use when adding Setapp AI+ capabilities to a macOS or iOS app. Triggers on mentions of "Setapp AI", "SetappAI", "AI+", "Setapp AI integration", or adding AI features through Setapp's AI proxy. Requires the Setapp Framework to be integrated first (use setapp-framework skill if not done).
+description: Use when adding Setapp AI+ capabilities to a macOS or iOS app. Triggers on mentions of "Setapp AI", "SetappAI", "AI+", "Setapp AI integration", the Setapp AI Swift SDK, or adding AI features through Setapp — text streaming, model discovery, conversation context, structured output, function calling, image generation and editing, audio transcription, video generation, or AI credit balances. Requires the Setapp Framework to be integrated first (use setapp-framework skill if not done).
 ---
 
 # Setapp AI+ Integration
 
 ## Overview
 
-Add AI capabilities to your app through Setapp's unified AI platform. Setapp proxies requests to multiple AI providers (OpenAI, Anthropic, Google Gemini) — no per-user API keys needed. Users get AI access through their Setapp subscription.
+Add AI capabilities to your app through Setapp's unified AI platform. Setapp routes requests to multiple AI providers (OpenAI, Anthropic, Google Gemini) — no per-user API keys needed. Users get AI access through their Setapp subscription, and Setapp handles credit metering and billing.
+
+The Swift SDK covers: model discovery, text streaming, multi-turn conversation context, structured outputs, function calling, reasoning models, image generation and editing, audio transcription, video generation, and credit balances. Every model declares what it supports via `mode` and `capabilities` — check those before calling.
+
+> **macOS and iOS use this SDK. Web apps and browser extensions do not** — they call the [AI Gateway](https://docs.setapp.com/docs/ai-gateway) HTTP API directly (OpenAI-compatible, `https://api.macpaw.com/ai`), or the [TypeScript SDK](https://docs.setapp.com/docs/typescript-sdk).
 
 ## Prerequisites
 
@@ -20,6 +24,19 @@ Search for: "import Setapp", "Setapp-framework" in Package.resolved, and "com.se
 If not found, tell the user: **"The Setapp Framework isn't integrated yet. Use the `setapp-framework` skill first."**
 
 > **Note:** On macOS, do NOT search for `SetappManager.shared.start` — that method doesn't exist on macOS v5.1.0+. The framework auto-initializes. Its absence does NOT mean the framework isn't integrated.
+
+**Check the pinned version too.** Much of this skill needs a floor newer than 5.1.0:
+
+| Feature | Minimum |
+|---|---|
+| Text streaming, models, image generation & editing | 5.1.0 |
+| Audio transcription | 5.2.0 |
+| Video generation | 5.3.0 |
+| `Images.Edit.Parameters` public initializer | 5.3.1 |
+| Credit balances (`ai.credits`) | 5.3.3 |
+| Cached balances / `balances(forceUpdate:)` | 5.3.6 |
+
+Latest is **5.3.6** (2026-08-14). If `Package.resolved` pins something older, bump it before writing against these APIs — the failure mode is a "no member" compile error that reads like a typo.
 
 ## Checklist
 
@@ -45,6 +62,8 @@ import SetappAI  // AI types — SetappAIAPI.Model, AuthConfiguration, etc.
 > **Common error:** If you only `import Setapp`, you'll get errors like "cannot find type 'AuthConfiguration'" or "value of type has no member 'ai'". The AI types live in the `SetappAI` module.
 
 ### Step 3: Configure OAuth
+
+Get the app's `OAuth Client ID` and `OAuth Client Secret` from the developer account: **Apps > OAuth Clients > Add new**, select the app, enter permitted redirect URLs, then View to copy the values. Create a **separate OAuth client per app and per platform** — sharing one across apps breaks Setapp's usage attribution and payout calculation. See https://docs.setapp.com/docs/oauth-clients.
 
 OAuth credentials should be stored securely, not hardcoded. The recommended pattern is:
 
@@ -91,19 +110,24 @@ configFiles:
 
 > **Important:** Call `configureAuth()` once before the first AI request, not necessarily at app launch. It's idempotent — safe to call multiple times.
 
-### Step 4: Error Presenter
+### Step 4: Error Presentation Mode
 
-Configure how errors are presented to the user:
+Error presentation is a **field on the same configuration object** as auth — not a separate setter:
 
 ```swift
-// Option A: Automatic (default) — SDK shows error UI
-// No code needed, this is the default behavior.
-
-// Option B: Propagate — errors flow through your own error handling
-SetappManager.shared.ai.set(errorPresenter: .propagate)
+SetappManager.shared.ai.set(configuration: .init(
+    authConfiguration: AuthConfiguration(
+        oauthClientId: clientId,
+        oauthSecret: secret
+    ),
+    mode: .propagate          // default is .autoPresent
+))
 ```
 
-Use `.propagate` if your app has its own error UI. Use the default if you want Setapp to handle error presentation.
+- `.autoPresent` (default) — the SDK shows its own error UI with recovery options, including a "Buy Credits" prompt that (from 5.3.4) links straight to the purchase page. No error handling needed.
+- `.propagate` — errors surface as thrown `SetappAIError`s for your own UI to handle. Pick this if the app has its own error presentation.
+
+> **There is no `set(errorPresenter:)`.** Older guidance showed `SetappManager.shared.ai.set(errorPresenter: .propagate)`; that API does not exist. Set `mode:` on the configuration instead — and set it in the *same* call as `authConfiguration`, since a second `set(configuration:)` replaces the whole object rather than merging.
 
 ### Step 5: Model Discovery
 
@@ -111,23 +135,40 @@ Fetch available models before making AI requests:
 
 ```swift
 let ai = SetappManager.shared.ai
-
-// List available models
 let models = try await ai.models.list()
 
-// Each model has:
-// - id: String (e.g., "claude-sonnet-4-20250514", "gpt-4.1-mini")
-// - SetappAIAPI.Model type
+// Each model exposes:
+// - id:           String — provider-prefixed, e.g. "openai/gpt-4.1-mini", "anthropic/claude-sonnet-4"
+// - mode:         what it does — .chat, .embedding, .imageGeneration, .videoGeneration, ...
+// - capabilities: what it supports — .vision, .functionCalling, and so on
+```
 
-// Pick a preferred model with fallback
-let model = models.first(where: { $0.id.contains("claude") && $0.id.contains("sonnet") })
-    ?? models.first(where: { $0.id.contains("claude") })
+**Select on `mode` and `capabilities`, not on substrings of `id`.** Model ids get renamed and re-versioned; capability flags are the stable contract, and they're the only way to know a model can actually do what you're about to ask:
+
+```swift
+// A chat model that can accept images
+let visionModel = models.first { $0.mode == .chat && $0.capabilities.contains(.vision) }
+
+// A model for the image-generation API
+let imageModel = models.first { $0.mode == .imageGeneration }
+```
+
+Keep a fallback chain — a user's plan may not include your first choice:
+
+```swift
+let model = models.first(where: { $0.id.contains("claude-sonnet") })
+    ?? models.first(where: { $0.mode == .chat })
     ?? models.first
 ```
 
-> **Note:** Available models change over time. Always use `ai.models.list()` for the current list. As of 2025-2026, available providers include OpenAI (GPT-4o, GPT-4.1, GPT-5 family), Anthropic (Claude Sonnet, Claude Opus), and Google Gemini.
+> **Available models change.** Always call `ai.models.list()` at runtime rather than hardcoding an id. Current providers span OpenAI, Anthropic, and Google Gemini.
 >
-> **Live model list:** https://vendor-api.setapp.com/resource/v1/ai/openai/supported-models
+> - Browsable table, filterable by provider/mode/capability: https://docs.setapp.com/docs/supported-ai-models
+> - Live JSON: https://api.macpaw.com/ai/api/v1/model/info
+>
+> From 5.3.2 the model info endpoint also reports each model's **context window**.
+>
+> ⚠️ The old proxy at `vendor-api.setapp.com/resource/v1/ai/openai` is **deprecated and now returns 404**. The gateway is `https://api.macpaw.com/ai/v1/...`.
 
 ### Step 6: Streaming Responses
 
@@ -333,6 +374,14 @@ final class SetappAIProvider: @unchecked Sendable {
 
 Read the user's remaining AI credits — e.g. to show a balance bar. **Requires Setapp-framework 5.3.3 or newer**; earlier versions have no `credits` member and `SetappManager.shared.ai.credits` will not compile.
 
+> **Caching changed in 5.3.6.** `balances()` now serves a cached value instead of hitting the network every call. Pass `forceUpdate: true` when you need a fresh figure from the server:
+>
+> ```swift
+> let fresh = try await ai.credits.balances(forceUpdate: true)
+> ```
+>
+> This inverts two things below. Cheap repeated reads (driving a balance bar off `balances()`) are now fine. But a post-run "what did that cost" delta must use `forceUpdate: true` on the *after* read, or you diff a stale cache against itself and always see zero.
+
 ```swift
 let balances = try await SetappManager.shared.ai.credits.balances()
 
@@ -354,7 +403,7 @@ func balances() async throws -> CreditsSnapshot {
 }
 ```
 
-> **Timeout it.** Unlike streaming, this is a bare XPC round trip with no built-in bound. Wrap it in a task-group race against `Task.sleep` (~15s) — a stalled Setapp handshake will otherwise hang the caller indefinitely, and if you gate refetching on an "in-flight" flag, that flag never clears and the balance freezes for the rest of the session.
+> **Timeout it.** Unlike streaming, a forced refresh is a bare XPC round trip with no built-in bound. Wrap it in a task-group race against `Task.sleep` (~15s) — a stalled Setapp handshake will otherwise hang the caller indefinitely, and if you gate refetching on an "in-flight" flag, that flag never clears and the balance freezes for the rest of the session.
 
 #### Arithmetic traps (all non-obvious, all real)
 
@@ -373,23 +422,136 @@ func balances() async throws -> CreditsSnapshot {
 
 Even then, residual noise is inherent: **another Setapp AI app on the same account, or an expiring credit bucket, lands in the same diff.** Suppress rather than guess when unsure.
 
-> **Open question — debit timing.** Whether the proxy debits `totalAvailable` synchronously at stream-end or with lag is not documented; verify against a live account. If it lags, a balance read immediately after a run under-reports, and a single run's usage can surface as two separate deltas. Poll-until-stable (refetch until two reads agree) if you need the exact figure.
+> **Open question — debit timing.** Whether the gateway debits `totalAvailable` synchronously at stream-end or with lag is not documented; verify against a live account. If it lags, a balance read immediately after a run under-reports, and a single run's usage can surface as two separate deltas. Poll-until-stable (refetch with `forceUpdate: true` until two reads agree) if you need the exact figure.
 
-## Rate Limits
+## Beyond Text: Images, Audio, Video
 
-Per-user limits to be aware of when designing your AI features:
+The Responses API is only part of the SDK. Check `model.mode` before calling any of these — passing a chat model to `ai.images` fails at runtime, not compile time.
 
-| Model Category | Per Minute | Per Hour | Per Day |
-|---------------|-----------|----------|---------|
-| GPT-4 & GPT-5 | 400 | — | 7,500 |
-| Embedding models | — | 10,000 | 10,000 |
-| All other models | — | 10,000 | 20,000 |
+### Image generation and editing (5.1.0+)
 
-**Token limits per request:**
-- Enthusiast plan: 160,000 input tokens
-- Expert plan: 1,600,000 input tokens
+```swift
+let model = models.first { $0.mode == .imageGeneration }!
 
-Handle HTTP 429 / `SetappAIError.code == .rateLimit` gracefully.
+let parameters = SetappAIAPI.Images.Generation.Parameters(
+    model: model,
+    prompt: "A serene landscape with mountains and a lake at sunset",
+    size: .size1024x1024,
+    quality: .high,
+    outputFormat: .png,          // .png, .jpeg, .webp
+    n: 1
+)
+
+let response = try await ai.images.generation(parameters: parameters, timeoutInterval: 60)
+if let imageData = response.data?.first?.data {
+    let image = NSImage(data: imageData)
+}
+```
+
+Editing takes one or more input images:
+
+```swift
+let inputImage = SetappAIAPI.Images.Edit.InputImage(image: originalImageData, imageType: .png)
+
+let parameters = SetappAIAPI.Images.Edit.Parameters(
+    model: model,
+    prompt: "Add a rainbow in the sky",
+    image: [inputImage],
+    size: .size1024x1024,
+    quality: .high,
+    outputFormat: .png,
+    n: 1
+)
+
+let response = try await ai.images.edit(parameters: parameters, timeoutInterval: 60)
+```
+
+> **Image streaming is not supported** — there is no progressive/partial image delivery. Show a determinate-free spinner, not a progress bar.
+>
+> On **5.3.0 and earlier**, `SetappAIAPI.Images.Edit.Parameters` had no public initializer, so the edit API was unreachable from outside the module. Fixed in **5.3.1** — bump rather than work around it.
+
+### Audio transcription (5.2.0+)
+
+```swift
+let parameters = SetappAIAPI.Audio.Transcription.Parameters(
+    file: audioData,
+    fileType: .mp3,
+    model: "openai/whisper-1"
+)
+
+let response = try await ai.audio.transcribe(parameters: parameters, timeoutInterval: 120)
+let text = response.text
+```
+
+Output variants, all on the same `parameters`:
+
+| Call | Returns |
+|---|---|
+| `transcribe` | JSON with `.text` |
+| `transcribeText` | plain `String` |
+| `transcribeVerbose` | `.segments` and `.words` with timings |
+| `transcribeSRT` / `transcribeVTT` | subtitle track |
+| `transcribeDiarized` | segments labelled by speaker |
+
+Set a generous `timeoutInterval` — transcription scales with audio length and 120s is a floor, not a ceiling.
+
+### Video generation (5.3.0+)
+
+Asynchronous: submit, poll, download. Generation runs from seconds to several minutes.
+
+```swift
+let model = models.first { $0.mode == .videoGeneration }!
+
+let parameters = SetappAIAPI.Videos.Generation.Parameters(
+    model: model,
+    prompt: "A calico cat playing a piano on a concert stage",
+    seconds: .four,
+    size: .portrait720x1280
+)
+
+// 1. Submit — returns immediately with status .queued
+let job = try await ai.videos.generate(parameters: parameters, timeoutInterval: 60)
+
+// 2. Poll until terminal
+var status = job.status
+while status != .completed && status != .failed {
+    try await Task.sleep(for: .seconds(5))
+    status = try await ai.videos.retrieve(videoID: job.id, timeoutInterval: 30).status
+}
+guard status == .completed else { /* inspect .error */ return }
+
+// 3. Download
+let videoData = try await ai.videos.content(videoID: job.id, variant: .video, timeoutInterval: 300)
+try videoData.write(to: destinationURL)
+
+let thumbnail = try await ai.videos.content(videoID: job.id, variant: .thumbnail, timeoutInterval: 60)
+```
+
+> **Make the poll loop cancellable and bounded.** The loop above runs forever if the job never reaches a terminal state. Wrap it in a `Task` the user can cancel, check `Task.isCancelled` each pass, and cap total elapsed time. The 300s download timeout is deliberate — video payloads are large.
+
+### Other Responses API features
+
+The SDK also supports **structured outputs** (JSON constrained by a schema), **function calling / tool use**, and **reasoning models**. These ride on the same `ai.responses` surface as streaming text. Check `model.capabilities` for support — `.functionCalling` in particular varies by provider — and see the [SDK guide](https://docs.setapp.com/docs/setapp-ai-sdk-integration) for parameter shapes.
+
+## Rate Limits and Gateway Errors
+
+Setapp does not publish per-user rate limits or per-plan token ceilings in its current documentation. Earlier versions of this skill carried a specific table (400 req/min, 7,500/day, per-plan input-token caps) that can no longer be verified against any published source — **do not design around those numbers.** Treat limits as unknown, handle the error, and confirm real thresholds with your Developer Support Representative if a feature depends on them.
+
+What *is* documented is the error contract. The gateway returns a stable `code` alongside each status:
+
+| Status | Gateway code | Meaning |
+|---|---|---|
+| 400 | `BAD_REQUEST` | Missing required field or malformed request |
+| 401 | `UNAUTHORIZED` | Missing, invalid, or expired token |
+| 402 | `INSUFFICIENT_CREDITS` | Not enough credits — send the user to buy more |
+| 403 | `FORBIDDEN` | Authenticated but not permitted (e.g. model not on this plan) |
+| 422 | `VALIDATION` | Invalid value; check `errors[]` for the offending field |
+| 429 | `RATE_LIMIT_EXCEEDED` | Back off and retry |
+| 500 | `INTERNAL_SERVER_ERROR` | Gateway or upstream failure; quote `request_id` to support |
+
+Through the Swift SDK these arrive as `SetappAIError.code` — `.rateLimit`, `.insufficientCredits`, `.modelNotAllowed`, `.general`. Branch on `code`, never on the message string.
+
+Reference: https://docs.setapp.com/reference/get_errors_reference
 
 ## Testing
 
@@ -409,9 +571,22 @@ Handle HTTP 429 / `SetappAIError.code == .rateLimit` gracefully.
 2. **OAuth credentials not injected** — If using xcconfig + Info.plist build variables, verify the xcconfig is referenced in build settings and the Info.plist key names match exactly.
 3. **Framework prerequisite check** — Don't search for `SetappManager.shared.start` on macOS to detect framework integration — that method doesn't exist on macOS. Search for `import Setapp` or the SPM dependency instead.
 4. **`ai.credits` won't compile on old SDKs** — the credits API arrived in Setapp-framework **5.3.3**. On earlier pins, `SetappManager.shared.ai.credits` fails with "value of type has no member 'credits'". Bump the SPM dependency, don't work around it. (See Step 11.)
+5. **`set(errorPresenter:)` does not exist** — error mode is the `mode:` field on the configuration object, set in the same call as `authConfiguration`. (See Step 4.)
+6. **Selecting models by substring of `id`** — ids get renamed and re-versioned. Filter on `mode` and `capabilities`; a chat model passed to `ai.images` fails at runtime, not compile time.
+7. **Stale credit balance after 5.3.6** — `balances()` is cached now. A "credits used" delta that doesn't pass `forceUpdate: true` diffs the cache against itself and reports zero forever.
+8. **Unbounded video poll loop** — `ai.videos.retrieve` polling has no built-in ceiling. Make it cancellable and cap elapsed time, or a stuck job hangs the feature.
+
+## Reference
+
+- [Setapp AI Swift SDK guide](https://docs.setapp.com/docs/setapp-ai-sdk-integration) — the authoritative API reference
+- [AI integration overview](https://docs.setapp.com/docs/ai-integration) · [AI Gateway (HTTP)](https://docs.setapp.com/docs/ai-gateway) · [TypeScript SDK](https://docs.setapp.com/docs/typescript-sdk)
+- [Supported models](https://docs.setapp.com/docs/supported-ai-models) · live JSON at https://api.macpaw.com/ai/api/v1/model/info
+- [Gateway error reference](https://docs.setapp.com/reference/get_errors_reference) · [OAuth clients](https://docs.setapp.com/docs/oauth-clients)
+- [Framework releases](https://github.com/MacPaw/Setapp-framework/releases) — check here for API changes before trusting this skill's version table
+- Docs index for agents: https://docs.setapp.com/llms.txt (append `.md` to any docs URL for clean Markdown)
 
 ## What This Skill Does NOT Cover
 
-- **Backend/server-side proxy setup** — for web apps, use the AI Gateway (HTTP API) directly
+- **Backend/server-side proxy setup** — for web apps and browser extensions, use the [AI Gateway](https://docs.setapp.com/docs/ai-gateway) HTTP API or the TypeScript SDK
 - **iOS activation flows** — covered in Setapp's iOS integration docs
 - **Pricing/monetization** — handled through the Setapp developer account

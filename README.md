@@ -7,9 +7,11 @@ Two skills, in order:
 | Skill | What it does | Phase |
 |---|---|---|
 | [`setapp-framework`](skills/setapp-framework/SKILL.md) | Integrates the Setapp Framework: separate Xcode target, SPM dependency, `Info.plist`, sandbox entitlements, usage reporting, archive packaging, and a pre-submission compliance scan. | 1 — required |
-| [`setapp-ai`](skills/setapp-ai/SKILL.md) | Adds Setapp AI+: OAuth config, model discovery, streaming responses, conversation context, credit balances, rate limits. | 2 — optional |
+| [`setapp-ai`](skills/setapp-ai/SKILL.md) | Adds Setapp AI+: OAuth config, model discovery, text streaming, conversation context, image generation and editing, audio transcription, video generation, credit balances, and the gateway error contract. | 2 — optional |
 
 `setapp-ai` assumes `setapp-framework` is already done.
+
+> Verified against **Setapp-framework 5.3.6** and the Setapp docs as of **18 August 2026**. Both skills carry version-floor tables; check [releases](https://github.com/MacPaw/Setapp-framework/releases) if you're on a newer SDK.
 
 ## Why use these
 
@@ -83,7 +85,8 @@ Skills go stale when the SDK or the review guidelines move. If you hit a pitfall
 
 ## Reference
 
-- [Setapp developer docs](https://docs.setapp.com)
-- [Setapp review guidelines](https://docs.setapp.com/docs/setapp-review-guidelines)
+- [Setapp developer docs](https://docs.setapp.com) — append `.md` to any docs URL for agent-readable Markdown, and see [`llms.txt`](https://docs.setapp.com/llms.txt) for the full page index
+- [Setapp AI Swift SDK guide](https://docs.setapp.com/docs/setapp-ai-sdk-integration)
+- [Setapp review guidelines](https://docs.setapp.com/docs/review-guidelines)
 - [Setapp-framework releases](https://github.com/MacPaw/Setapp-framework/releases)
 - [Developer portal](https://developer.setapp.com)
