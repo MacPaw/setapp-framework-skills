@@ -77,7 +77,12 @@ docs/
 .claude-plugin/
   plugin.json                 Claude Code plugin manifest
   marketplace.json            Makes this repo installable as a marketplace
+LICENSE                       Apache License 2.0
 ```
+
+## License
+
+[Apache License 2.0](LICENSE), copyright MacPaw Way Ltd. Use, modify, and redistribute the skills freely, including republishing a modified copy elsewhere. By opening a pull request against this repository you license your contribution under the same terms — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 

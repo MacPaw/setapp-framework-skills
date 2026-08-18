@@ -8,6 +8,7 @@
   },
   "homepage": "https://github.com/MacPaw/setapp-framework-skills",
   "repository": "https://github.com/MacPaw/setapp-framework-skills",
+  "license": "Apache-2.0",
   "keywords": [
     "setapp",
     "macos",
