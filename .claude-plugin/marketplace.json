@@ -1,0 +1,14 @@
+{
+  "name": "setapp",
+  "owner": {
+    "name": "MacPaw",
+    "url": "https://github.com/MacPaw"
+  },
+  "plugins": [
+    {
+      "name": "setapp-skills",
+      "source": "./",
+      "description": "Setapp Framework + Setapp AI+ integration skills for macOS apps."
+    }
+  ]
+}
