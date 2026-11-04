@@ -4,8 +4,10 @@
 #   1. diffs the framework's CHANGELOG *and* its .swiftinterface files between
 #      the version the skills document and the new tag (release notes miss things),
 #   2. updates both SKILL.md files, README, CHANGELOG and plugin version,
-#   3. type-checks every Swift snippet it touched against the new SDK on macOS,
-#   4. opens a PR with a report of what changed and what it could not verify.
+#   3. checks every API it documents against the published .swiftinterface files
+#      (no compilation — testing the SDK itself belongs to the SDK team),
+#   4. opens a PR with a report of what changed and what it could not verify,
+#      once .github/sdk-sync/check-sync.sh confirms every version statement moved.
 #
 # Setup: add an ANTHROPIC_API_KEY repository secret. Optional instant trigger:
 # have Setapp-framework's release workflow send
@@ -68,8 +70,7 @@ jobs:
   update:
     needs: detect
     if: needs.detect.outputs.run == 'true'
-    # macOS so the agent can type-check snippets against the real xcframework.
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       CURRENT: ${{ needs.detect.outputs.current }}
@@ -91,6 +92,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
           prompt: |
             Update this repository's Setapp skills from Setapp-framework ${{ env.CURRENT }} to ${{ env.TARGET }}.
             Framework checkout at the new tag: ${{ runner.temp }}/fw
@@ -99,14 +101,12 @@ jobs:
             Follow .github/sdk-sync/agent-instructions.md exactly. Write your report to ${{ runner.temp }}/report.md.
           claude_args: >-
             --max-turns 120
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git -C:*),Bash(grep:*),Bash(sed:*),Bash(awk:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(swift:*),Bash(swiftc:*),Bash(xcrun:*),Bash(python3:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git -C:*),Bash(grep:*),Bash(sed:*),Bash(awk:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(python3:*),Bash(bash .github/sdk-sync/check-sync.sh:*)"
 
-      - name: Guard — version actually bumped
+      - name: Guard — every version statement and release note updated
         run: |
-          grep -q "Latest is \*\*$TARGET\*\*" skills/setapp-ai/SKILL.md
-          grep -q "from: \"$TARGET\"" skills/setapp-framework/SKILL.md
-          test -s "$RUNNER_TEMP/report.md"
           git diff --stat
+          bash .github/sdk-sync/check-sync.sh "$TARGET" "${{ github.sha }}" "$RUNNER_TEMP/report.md"
 
       - name: Open PR
         uses: peter-evans/create-pull-request@v7
