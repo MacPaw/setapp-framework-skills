@@ -7,11 +7,11 @@ Two skills, in order:
 | Skill | What it does | Phase |
 |---|---|---|
 | [`setapp-framework`](skills/setapp-framework/SKILL.md) | Integrates the Setapp Framework: separate Xcode target, SPM dependency, `Info.plist`, sandbox entitlements, usage reporting, archive packaging, and a pre-submission compliance scan. | 1 — required |
-| [`setapp-ai`](skills/setapp-ai/SKILL.md) | Adds Setapp AI+: OAuth config, model discovery, text streaming, conversation context, image generation and editing, audio transcription, video generation, credit balances, and the gateway error contract. | 2 — optional |
+| [`setapp-ai`](skills/setapp-ai/SKILL.md) | Adds Setapp AI+: OAuth config, model discovery, text streaming, conversation context, image generation and editing, audio transcription, text-to-speech, video generation, credit balances and the purchase link, and the gateway error contract. | 2 — optional |
 
 `setapp-ai` assumes `setapp-framework` is already done.
 
-> Verified against **Setapp-framework 5.3.6** and the Setapp docs as of **18 August 2026**. Both skills carry version-floor tables; check [releases](https://github.com/MacPaw/Setapp-framework/releases) if you're on a newer SDK.
+> Verified against **Setapp-framework 5.5.5** and the Setapp docs as of **4 November 2026**. Both skills carry version-floor tables; check [releases](https://github.com/MacPaw/Setapp-framework/releases) if you're on a newer SDK.
 
 ## Why use these
 
