@@ -53,7 +53,7 @@ If using a standard Xcode project: Duplicate the existing macOS target and renam
 Add the Setapp Framework via Swift Package Manager:
 
 - **URL:** `https://github.com/MacPaw/Setapp-framework.git`
-- **Version:** From `5.3.6` (latest as of 2026-08-18 — always check [releases](https://github.com/MacPaw/Setapp-framework/releases))
+- **Version:** From `5.5.5` (latest as of 2026-11-04 — always check [releases](https://github.com/MacPaw/Setapp-framework/releases))
 
 > **Version floors.** `5.1.0` still works for plain licensing, but take the latest unless you have a reason not to. Features gated on newer releases:
 >
@@ -61,12 +61,25 @@ Add the Setapp Framework via Swift Package Manager:
 > |---|---|
 > | Plain licensing / activation | 5.1.0 |
 > | AI image generation & editing | 5.1.0 |
-> | AI audio transcription | 5.2.0 |
-> | AI video generation | 5.3.0 |
+> | AI audio transcription | 5.2.0 (v2 API: 5.5.4) |
+> | AI video generation | 5.3.0 (v2 API: 5.5.4) |
 > | AI credit balances (`ai.credits`) | 5.3.3 |
 > | Cached credit balances (`forceUpdate:`) | 5.3.6 |
+> | `openWithAuth(url:)`, AI links API (`ai.links`) | 5.4.0 |
+> | `requestPendingUpdate` / `applyPendingUpdate` (macOS) | 5.5.0 |
+> | Credits purchase URL with `returnURL:` | 5.5.1 |
+> | AI text-to-speech (`ai.audio.speech`) | 5.5.2 |
 >
 > **Breaking change in 5.3.6:** `requestAuthorizationCode` no longer takes a `scope` argument — the framework now applies the `application.access` scope itself, and `VendorAuthorizationScope` / `SCVendorAppScope` are no longer public. If the app calls it, change to `requestAuthorizationCode(clientID:completionHandler:)`.
+>
+> **Breaking change in 5.4.0 (iOS):** `SetappError.ErrorCode` cases `.blocked` / `.blockedAfterTrial` are now `.inactiveLicense` / `.trialAlreadyUsed`, and their numeric codes moved from 1708/1709 to 1710/1711. Name-based matches fail to compile; numeric comparisons still compile but **silently stop matching** — grep for `1708` and `1709` too.
+>
+> **Breaking changes in 5.5.4 (macOS)** — the release notes only mention the first two; the rest are visible in the `.swiftinterface` diff:
+>
+> - **Startup integrity check fails for non-Electron apps signed with `com.apple.security.cs.disable-library-validation`.** Remove that entitlement from the Setapp target unless the app is Electron. See Step 8.
+> - `LicenseValidationStatus` is no longer in the generated `Setapp-Swift.h`; update Objective-C code that referenced it there.
+> - **Minimum macOS is now 12.0** (was 11.5). Raise `MACOSX_DEPLOYMENT_TARGET` on the Setapp target or the package won't resolve/link.
+> - **`SetappManager` is no longer an `NSObject`.** KVO (`SetappManager.shared.observe(\.subscription, …)`) and `@objc` access no longer compile in Swift. Observe the subscription with Combine — `SetappManager.shared.publisher(for: \.subscription)` — or keep using `SetappManager.didChangeSubscriptionNotification` / `SetappManagerDelegate`. Objective-C code moves to the deprecated `STPManager` / `STPSubscription` / `STPConfiguration` shims, which keep the old `@objc` selectors.
 
 If the project uses `Package.swift`:
 
@@ -75,7 +88,7 @@ dependencies: [
     .package(
         name: "Setapp",
         url: "https://github.com/MacPaw/Setapp-framework.git",
-        from: "5.3.6"
+        from: "5.5.5"
     )
 ]
 ```
@@ -86,7 +99,7 @@ If using xcodegen (`project.yml`):
 packages:
   Setapp:
     url: https://github.com/MacPaw/Setapp-framework.git
-    from: "5.3.6"
+    from: "5.5.5"
 ```
 
 Link only to the Setapp target:
@@ -220,6 +233,15 @@ Add this to the **Setapp target's entitlements file**:
 
 This is the **most common cause** of "Setapp not detected" errors in sandboxed apps.
 
+**Hardened Runtime — no library-validation opt-out (5.5.4+).** From Setapp-framework 5.5.4, the startup integrity check **fails** for non-Electron apps signed with:
+
+```xml
+<key>com.apple.security.cs.disable-library-validation</key>
+<true/>
+```
+
+Search the Setapp target's entitlements for `disable-library-validation`. If present and the app is not Electron, remove it — it was usually added to load an unsigned plug-in or a third-party dylib; sign that code with the same Team ID instead. Electron apps are exempt.
+
 ### Step 9: Usage Reporting
 
 Detect the app type and add appropriate usage events:
@@ -260,6 +282,23 @@ Optionally, add an on-demand menu item:
     SetappManager.shared.showReleaseNotesWindow()
 }
 ```
+
+**Optional — app-driven updates (macOS, 5.5.0+).** The app can ask Setapp whether a newer version is staged and apply it on its own schedule (e.g. from an "Update available" banner). This is Setapp's own updater, so it does not conflict with the "no custom updater" rule in Step 14:
+
+```swift
+SetappManager.shared.requestPendingUpdate { result in
+    guard case let .success(update?) = result else { return }   // nil = nothing pending
+    // update.version, update.buildNumber, update.releaseNotes
+    DispatchQueue.main.async { showUpdateBanner(for: update) }
+}
+
+// When the user accepts:
+SetappManager.shared.applyPendingUpdate { result in
+    if case let .failure(error) = result { /* surface it */ }
+}
+```
+
+**Optional — open Setapp web pages signed in (5.4.0+).** `SetappManager.shared.openWithAuth(url:)` opens a Setapp URL with the user already authenticated on the web. Only Setapp URLs are accepted; use `NSWorkspace.shared.open` for anything else.
 
 ### Step 11: Archive Packaging for Submission
 
@@ -357,7 +396,7 @@ If the fetched guidelines contain requirements not covered in Step 15, add them 
     Action required: [describe what the developer needs to verify or change]
 ```
 
-Also re-check the pinned SDK version against https://github.com/MacPaw/Setapp-framework/releases — release notes are where breaking API changes surface first (the `requestAuthorizationCode` scope removal in 5.3.6, for example, appeared there before anywhere else).
+Also re-check the pinned SDK version against https://github.com/MacPaw/Setapp-framework/releases — release notes are where breaking API changes surface first (the `requestAuthorizationCode` scope removal in 5.3.6 and the `SetappError` code renumbering in 5.4.0, for example, appeared there before anywhere else). Release notes are not exhaustive, though — 5.5.4 also raised the macOS floor to 12.0 and dropped `SetappManager`'s `NSObject` base without mentioning either. When a bump breaks the build, diff the `.swiftinterface` files under `Setapp.xcframework` between the two tags.
 
 If a page cannot be fetched (network issue, 403, etc.), note this and proceed — the static checklist in Step 15 is a good baseline, but the developer should verify manually before submission.
 
@@ -428,6 +467,15 @@ Patterns: "SMLoginItemSetEnabled", "launchd", "LaunchAgent", "LaunchDaemon",
 
 If found: Verify there is a clear user consent flow before any background process is enabled.
 
+#### Library-validation opt-out (5.5.4+)
+Fails the framework's startup integrity check for non-Electron apps:
+
+```
+Patterns: "com.apple.security.cs.disable-library-validation" in *.entitlements
+```
+
+If found in the Setapp target and the app is not Electron: remove it (see Step 8).
+
 #### Summary output format
 
 After running all searches, present a table like this:
@@ -440,6 +488,7 @@ After running all searches, present a table like this:
 | Custom licensing | ⚠️ Yes | `Sources/License.swift:18` | Already guarded with `#if !SETAPP` ✓ |
 | Analytics SDKs | ⚠️ Yes | `Sources/Tracking.swift:7` | Verify privacy compliance |
 | Background processes | ✅ None | — | — |
+| Library-validation opt-out | ✅ None | — | — |
 
 Only proceed to Step 15 once all ⚠️ items are either resolved or confirmed safe.
 
@@ -461,6 +510,8 @@ Before submitting to Setapp, verify:
 - [ ] `NSUpdateSecurityPolicy` is in Info.plist
 - [ ] `MPSupportedArchitectures` is in Info.plist
 - [ ] Sandbox Mach exception (`com.setapp.ProvisioningService`) is in entitlements (if sandboxed)
+- [ ] No `com.apple.security.cs.disable-library-validation` entitlement (unless Electron) — fails the integrity check from 5.5.4
+- [ ] Deployment target is **macOS 12.0+** (required from 5.5.4)
 - [ ] Usage reporting is configured for the app type
 - [ ] Archive includes a **1024×1024 `AppIcon.png`** alongside the `.app` (exact filename)
 - [ ] Archive unpacks with `ditto -x -k` to a single root dir, no `__MACOSX`
@@ -493,7 +544,10 @@ Reference: https://docs.setapp.com/docs/testing-your-application
 4. **Icon named after the app** — the standalone icon must be `AppIcon.png` exactly, 1024×1024, in the zip next to the `.app`. Naming it `<AppName>.png` fails the upload, and Xcode caps standalone icon export at 256px unless `ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = all`.
 5. **App name collision in App Store Connect** — Use "AppName (Setapp)" for the ASC record name.
 6. **Finder-compressed archive** — right-click > Compress adds `__MACOSX`, which fails validation. Pack with `ditto`/`zip -r` and verify by unpacking.
-7. **SPM version** — The docs' install page still shows `from: "4.2.1"`; that's stale. Use 5.3.6 (or current latest). Older pins silently lack the AI, credits, and image/audio/video APIs.
+7. **SPM version** — The docs' install page still shows `from: "4.2.1"`; that's stale. Use 5.5.5 (or current latest). Older pins silently lack the AI, credits, links, and image/audio/video/speech APIs.
+8. **KVO on `SetappManager` after 5.5.4** — `SetappManager` is no longer an `NSObject`, so `observe(\.subscription, …)` stops compiling. Use `SetappManager.shared.publisher(for: \.subscription)` (Combine), the delegate, or `didChangeSubscriptionNotification`.
+9. **`disable-library-validation` entitlement** — from 5.5.4 it makes the startup integrity check fail for non-Electron apps, which presents as an activation failure. Remove it from the Setapp target.
+10. **Old `SetappError` codes (iOS)** — `.blocked` / `.blockedAfterTrial` and raw codes 1708/1709 are gone since 5.4.0; use `.inactiveLicense` / `.trialAlreadyUsed` (1710/1711). Raw-number checks compile and silently never match.
 
 ## Reference
 
