@@ -79,7 +79,7 @@ Add the Setapp Framework via Swift Package Manager:
 > - **Startup integrity check fails for non-Electron apps signed with `com.apple.security.cs.disable-library-validation`.** Remove that entitlement from the Setapp target unless the app is Electron. See Step 8.
 > - `LicenseValidationStatus` is no longer in the generated `Setapp-Swift.h`; update Objective-C code that referenced it there.
 > - **Minimum macOS is now 12.0** (was 11.5). Raise `MACOSX_DEPLOYMENT_TARGET` on the Setapp target or the package won't resolve/link.
-> - **`SetappManager` is no longer an `NSObject`.** KVO (`SetappManager.shared.observe(\.subscription, …)`) and `@objc` access no longer compile in Swift. Observe the subscription with Combine — `SetappManager.shared.publisher(for: \.subscription)` — or keep using `SetappManager.didChangeSubscriptionNotification` / `SetappManagerDelegate`. Objective-C code moves to the deprecated `STPManager` / `STPSubscription` / `STPConfiguration` shims, which keep the old `@objc` selectors.
+> - **`SetappManager` is no longer an `NSObject`.** KVO (`SetappManager.shared.observe(\.subscription, …)`) and `@objc` access no longer compile in Swift. Observe the subscription with Combine — `SetappManager.shared.publisher(for: \.subscription)` — or `SetappManager.didChangeSubscriptionNotification`. **Not with a delegate:** on macOS the Swift `SetappManager` has no `delegate` property (`SetappManager.shared.delegate = …` fails with "value of type 'SetappManager' has no member 'delegate'"); delegate access exists only on the deprecated `STPManager` shim. Objective-C code moves to the deprecated `STPManager` / `STPSubscription` / `STPConfiguration` shims, which keep the old `@objc` selectors.
 
 If the project uses `Package.swift`:
 
@@ -545,7 +545,7 @@ Reference: https://docs.setapp.com/docs/testing-your-application
 5. **App name collision in App Store Connect** — Use "AppName (Setapp)" for the ASC record name.
 6. **Finder-compressed archive** — right-click > Compress adds `__MACOSX`, which fails validation. Pack with `ditto`/`zip -r` and verify by unpacking.
 7. **SPM version** — The docs' install page still shows `from: "4.2.1"`; that's stale. Use 5.5.5 (or current latest). Older pins silently lack the AI, credits, links, and image/audio/video/speech APIs.
-8. **KVO on `SetappManager` after 5.5.4** — `SetappManager` is no longer an `NSObject`, so `observe(\.subscription, …)` stops compiling. Use `SetappManager.shared.publisher(for: \.subscription)` (Combine), the delegate, or `didChangeSubscriptionNotification`.
+8. **KVO on `SetappManager` after 5.5.4** — `SetappManager` is no longer an `NSObject`, so `observe(\.subscription, …)` stops compiling. Use `SetappManager.shared.publisher(for: \.subscription)` (Combine) or `didChangeSubscriptionNotification`. Don't migrate to a delegate: on macOS `SetappManager` has no `delegate` property, only the deprecated `STPManager` shim does.
 9. **`disable-library-validation` entitlement** — from 5.5.4 it makes the startup integrity check fail for non-Electron apps, which presents as an activation failure. Remove it from the Setapp target.
 10. **Old `SetappError` codes (iOS)** — `.blocked` / `.blockedAfterTrial` and raw codes 1708/1709 are gone since 5.4.0; use `.inactiveLicense` / `.trialAlreadyUsed` (1710/1711). Raw-number checks compile and silently never match.
 
