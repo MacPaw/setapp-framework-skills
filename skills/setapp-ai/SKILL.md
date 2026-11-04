@@ -498,14 +498,17 @@ let response = try await ai.images.edit(parameters: parameters, timeoutInterval:
 
 ### Audio transcription (v2: 5.5.4+)
 
-The v2 API accepts OpenAI **and** ElevenLabs transcription models, takes either raw audio or a source URL, and can stream. Pick the model by mode:
+The v2 endpoint serves OpenAI **and** ElevenLabs transcription models, and what each call accepts depends on the model. `Model` has no provider field; the provider is the prefix of its `id` (`openai/…`, `elevenlabs/…`). Unlike substring-matching for a specific model, the provider prefix is part of the id contract, so it's the reliable way to tell providers apart:
 
 ```swift
-let model = models.first { $0.mode == .audioTranscription }!
+let transcriptionModels = models.filter { $0.mode == .audioTranscription }
+let openAIModel     = transcriptionModels.first { $0.id.hasPrefix("openai/") }
+let elevenLabsModel = transcriptionModels.first { $0.id.hasPrefix("elevenlabs/") }
 
+guard let model = openAIModel else { return }
 let parameters = SetappAIAPI.Audio.TranscriptionV2.Parameters(
     model: model,
-    source: .file(audioData, fileType: .mp3),   // or .url(remoteAudioURL)
+    source: .file(audioData, fileType: .mp3),
     language: "en"                              // optional
 )
 
@@ -513,24 +516,38 @@ let response = try await ai.audio.transcribeV2(parameters: parameters, timeoutIn
 let text = response.text
 ```
 
-Output variants, all on the same `parameters`:
+`source: .url(_:)` (an `https` URL the provider downloads) works with **ElevenLabs models only**; OpenAI models need `.file`.
 
-| Call | Returns |
-|---|---|
-| `transcribeV2` | JSON with `.text` |
-| `transcribeTextV2` | plain `String` |
-| `transcribeVerboseV2` | `.segments` and `.words` with timings |
-| `transcribeSRTV2` / `transcribeVTTV2` | subtitle track |
-| `transcribeDiarizedV2` | segments labelled by speaker |
-| `transcribeElevenLabsV2` | ElevenLabs words with speaker IDs, entities, language probability |
-| `transcribeElevenLabsMultichannelV2` | one transcript per audio channel |
-| `transcribeStreamV2` | stream of `.transcription(.textDelta / .textDone)` events |
+Pick the call to match the model. The output format is a property of the model, not just of the method you call:
 
-Call the OpenAI-shaped variants with OpenAI models and the `ElevenLabs` variants with ElevenLabs models — the response shapes differ. Streaming:
+| Call | Returns | Models |
+|---|---|---|
+| `transcribeV2` / `transcribeTextV2` | JSON with `.text` / plain `String` | OpenAI models |
+| `transcribeVerboseV2` | `.segments` and `.words` with timings | `whisper-1` |
+| `transcribeSRTV2` / `transcribeVTTV2` | subtitle track | `whisper-1` |
+| `transcribeDiarizedV2` | segments labelled by speaker | OpenAI diarization models (e.g. `gpt-4o-transcribe-diarize`) |
+| `transcribeStreamV2` | stream of `.transcription(.textDelta / .textDone)` events | `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` |
+| `transcribeElevenLabsV2` | ElevenLabs words with speaker IDs, entities, language probability | ElevenLabs models |
+| `transcribeElevenLabsMultichannelV2` | one transcript per audio channel | ElevenLabs models |
+
+> The Models column follows OpenAI's per-model format support and the live model list (`whisper-1`, `gpt-4o(-mini)-transcribe`, `elevenlabs/scribe_v1`/`v2` as of 2026-11-04). The SDK doesn't enforce it, so a mismatch compiles and fails at runtime. Check the [supported models](https://docs.setapp.com/docs/supported-ai-models) page when a new model appears.
+
+**Streaming** needs a streaming-capable OpenAI model; `whisper-1` and the ElevenLabs models don't stream on this endpoint. Select one explicitly and fall back to a non-streaming call if the user's plan doesn't include it:
 
 ```swift
+let streamingIDs: Set<String> = ["openai/gpt-4o-mini-transcribe", "openai/gpt-4o-transcribe"]
+guard let streamModel = models.first(where: { streamingIDs.contains($0.id) }) else {
+    // No streaming model available: use transcribeV2 instead
+    return
+}
+
+let streamParameters = SetappAIAPI.Audio.TranscriptionV2.Parameters(
+    model: streamModel,
+    source: .file(audioData, fileType: .mp3)
+)
+
 var text = ""
-for try await event in try await ai.audio.transcribeStreamV2(parameters: parameters) {
+for try await event in try await ai.audio.transcribeStreamV2(parameters: streamParameters) {
     switch event {
     case let .transcription(.textDelta(d)): text += d.delta
     case let .transcription(.textDone(done)): text = done.text
@@ -541,28 +558,30 @@ for try await event in try await ai.audio.transcribeStreamV2(parameters: paramet
 
 Set a generous `timeoutInterval` on the non-streaming calls — transcription scales with audio length and 120s is a floor, not a ceiling.
 
-> **Migrating from v1** (`transcribe`, `transcribeText`, `transcribeVerbose`, … on `SetappAIAPI.Audio.Transcription.Parameters(file:fileType:model:)`): these are deprecated in 5.5.4 and the endpoint is due to be **removed around 20 November 2026**. Add `V2` to the method name and move `file` / `fileType` into `source: .file(_:fileType:)`.
+> **Migrating from v1** (`transcribe`, `transcribeText`, `transcribeVerbose`, … on `SetappAIAPI.Audio.Transcription.Parameters(file:fileType:model:)`): these are deprecated in 5.5.4 and the endpoint is due to be **removed around 20 November 2026**. Add `V2` to the method name and move `file` / `fileType` into `source: .file(_:fileType:)`. Keep `whisper-1` if you relied on verbose, SRT or VTT output: the `gpt-4o` transcription models don't produce them.
 
 ### Text-to-speech (5.5.2+)
 
-List voices, then stream synthesized audio. Voices are paginated:
+The `voice` must belong to the **same provider as the model**: an ElevenLabs `voiceID` from `ai.audio.voices`, or an OpenAI voice name such as `"alloy"`. A mismatched pair fails at runtime. Pick the model first, then the voice for its provider:
 
 ```swift
-let voices = try await ai.audio.voices(parameters: .init(provider: .elevenLabs))
-// voices.voices: [Voice] — voiceID, name, category, previewURL, labels
-// voices.hasMore / voices.nextPageToken — pass the token back for the next page
+let speechModels = models.filter { $0.mode == .audioSpeech }
 
-let speechModel = models.first { $0.mode == .audioSpeech }!
-
-let stream = try await ai.audio.speech(parameters: .init(
-    model: speechModel,
-    input: "Hello from Setapp.",
-    voice: voices.voices[0].voiceID,
-    responseFormat: .mp3            // .mp3, .opus, .aac, .flac, .wav, .pcm
-))
+let parameters: SetappAIAPI.Audio.Speech.Parameters
+if let model = speechModels.first(where: { $0.id.hasPrefix("elevenlabs/") }) {
+    // ElevenLabs model → a voice from the ElevenLabs catalogue (paginated: hasMore / nextPageToken)
+    let page = try await ai.audio.voices(parameters: .init(provider: .elevenLabs))
+    guard let voice = page.voices.first else { return }
+    parameters = .init(model: model, input: "Hello from Setapp.", voice: voice.voiceID, responseFormat: .mp3)
+} else if let model = speechModels.first(where: { $0.id.hasPrefix("openai/") }) {
+    // OpenAI model → an OpenAI voice name; ai.audio.voices lists ElevenLabs voices only
+    parameters = .init(model: model, input: "Hello from Setapp.", voice: "alloy", responseFormat: .mp3)
+} else {
+    return
+}
 
 var audio = Data()
-for try await event in stream {
+for try await event in try await ai.audio.speech(parameters: parameters) {
     switch event {
     case let .speech(.audioDelta(chunk)): audio.append(chunk.audio)
     case .speech(.audioDone): break         // .usage has token counts
@@ -571,7 +590,7 @@ for try await event in stream {
 }
 ```
 
-Chunks arrive as they're synthesized — feed them to a player for low-latency playback, or accumulate and write the file once `.audioDone` arrives.
+`ResponseFormat` offers `.mp3`, `.opus`, `.aac`, `.flac`, `.wav` and `.pcm`, but not every provider accepts every format; `.mp3` is accepted by both current providers. Chunks arrive as they're synthesized — feed them to a player for low-latency playback, or accumulate and write the file once `.audioDone` arrives.
 
 ### Video generation (v2: 5.5.4+)
 
@@ -599,7 +618,7 @@ var current = job
 while [.pending, .inProgress].contains(current.status) {
     try Task.checkCancellation()
     guard Date.now < deadline else { throw CancellationError() }
-    try await Task.sleep(for: .seconds(5))
+    try await Task.sleep(nanoseconds: 5_000_000_000)   // sleep(for:) needs macOS 13; the SDK floor is 12
     current = try await ai.videos.retrieveV2(videoID: job.id, timeoutInterval: 30)
 }
 guard current.status == .completed else {
@@ -661,11 +680,12 @@ Reference: https://docs.setapp.com/reference/get_errors_reference
 3. **Framework prerequisite check** — Don't search for `SetappManager.shared.start` on macOS to detect framework integration — that method doesn't exist on macOS. Search for `import Setapp` or the SPM dependency instead.
 4. **`ai.credits` won't compile on old SDKs** — the credits API arrived in Setapp-framework **5.3.3**. On earlier pins, `SetappManager.shared.ai.credits` fails with "value of type has no member 'credits'". Bump the SPM dependency, don't work around it. (See Step 11.)
 5. **`set(errorPresenter:)` does not exist** — error mode is the `mode:` field on the configuration object, set in the same call as `authConfiguration`. (See Step 4.)
-6. **Selecting models by substring of `id`** — ids get renamed and re-versioned. Filter on `mode` and `capabilities`; a chat model passed to `ai.images` fails at runtime, not compile time.
+6. **Selecting models by substring of `id`** — ids get renamed and re-versioned. Filter on `mode` and `capabilities`; a chat model passed to `ai.images` fails at runtime, not compile time. The exception is the provider prefix (`openai/`, `elevenlabs/`): `Model` has no provider field, so `id.hasPrefix("elevenlabs/")` is how you match a voice or audio call to the right provider.
 7. **Stale credit balance after 5.3.6** — `balances()` is cached now. A "credits used" delta that doesn't pass `forceUpdate: true` diffs the cache against itself and reports zero forever.
 8. **Unbounded video poll loop** — `ai.videos.retrieveV2` polling has no built-in ceiling. Make it cancellable and cap elapsed time, or a stuck job hangs the feature.
 9. **Still on v1 transcription/video** — `transcribe*` without `V2` and `videos.generate/retrieve/content` are deprecated since 5.5.4 and the endpoints are due to be removed around **20 November 2026**. Treat the deprecation warnings as errors and migrate; after removal they fail at runtime, not compile time.
 10. **Hardcoded purchase URL** — use `ai.links.purchaseURL()` (5.4.0+), or `purchaseURL(clientID:returnURL:)` (5.5.1+) to bring the user back. It needs no authorization, so it works for lapsed subscribers.
+11. **Mixing providers in audio calls** — a speech `voice` must come from the model's provider, `transcribeStreamV2` needs `gpt-4o(-mini)-transcribe`, verbose/SRT/VTT need `whisper-1`, and `.url` sources need an ElevenLabs model. The SDK doesn't check any of this; it fails at runtime. Tell providers apart by the `id` prefix.
 
 ## Reference
 
