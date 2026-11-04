@@ -9,7 +9,7 @@ Updated both skills from Setapp-framework 5.3.6 to **5.5.5**, covering 5.4.0 thr
 - **v1 transcription and video endpoints are deprecated (5.5.4) and due for removal around 20 November 2026.** `setapp-ai` now teaches the v2 APIs (`transcribeV2` and siblings, `generateV2` / `retrieveV2` / `contentV2`) with migration notes. v2 video has no progress, expiry, thumbnail, or spritesheet.
 - **`SetappError.ErrorCode` renumbering (5.4.0, iOS):** `.blocked` / `.blockedAfterTrial` → `.inactiveLicense` / `.trialAlreadyUsed`, 1708/1709 → 1710/1711. Numeric comparisons fail silently.
 - **Integrity check rejects `com.apple.security.cs.disable-library-validation`** for non-Electron apps (5.5.4). Added to Step 8, the Step 14 compliance scan, and the Step 15 checklist.
-- **Not in the release notes (5.5.4):** minimum macOS raised from 11.5 to **12.0**. `SetappManager` is no longer an `NSObject`, so KVO on `subscription` stops compiling; use `publisher(for: \.subscription)`, the delegate, or the notification instead. Objective-C moves to the deprecated `STPManager` shims.
+- **Not in the release notes (5.5.4):** minimum macOS raised from 11.5 to **12.0**. `SetappManager` is no longer an `NSObject`, so KVO on `subscription` stops compiling; use `publisher(for: \.subscription)` or the notification instead (on macOS `SetappManager` has no `delegate` property; only the deprecated `STPManager` shim does). Objective-C moves to the deprecated `STPManager` shims.
 - `LicenseValidationStatus` removed from `Setapp-Swift.h` (5.5.4).
 
 ### Added
@@ -17,7 +17,7 @@ Updated both skills from Setapp-framework 5.3.6 to **5.5.5**, covering 5.4.0 thr
 - **Links API** (5.4.0): `ai.links.all()` and `ai.links.purchaseURL()`, plus `purchaseURL(clientID:returnURL:)` (5.5.1) to return the user to the app after buying credits.
 - **Text-to-speech** (5.5.2): `ai.audio.voices(parameters:)` and streaming `ai.audio.speech(parameters:)`.
 - **`Model.params`** (5.5.4): per-model supported durations, aspect ratios, resolutions, and so on, for building option UIs without hardcoding.
-- **ElevenLabs transcription** and **streaming transcription** via the v2 audio API.
+- **ElevenLabs transcription** and **streaming transcription** via the v2 audio API, with which models each call supports: streaming needs `gpt-4o(-mini)-transcribe`, verbose/SRT/VTT need `whisper-1`, URL sources need ElevenLabs. Text-to-speech picks the voice from the model's provider.
 - **`requestPendingUpdate` / `applyPendingUpdate`** (5.5.0, macOS) for app-driven updates, and **`openWithAuth(url:)`** (5.4.0).
 - The live-guidelines step now says to diff `.swiftinterface` files when a bump breaks the build, since release notes aren't exhaustive.
 
