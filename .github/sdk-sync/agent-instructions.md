@@ -16,7 +16,7 @@ You are updating `skills/setapp-framework/SKILL.md` and `skills/setapp-ai/SKILL.
 
 Follow `CONTRIBUTING.md`. In particular:
 
-- Bump the version everywhere it's stated as current: the `Version:` line and both SPM/xcodegen `from:` pins in `setapp-framework`, the `Latest is **x.y.z** (date)` line in `setapp-ai` (date = the tag's CHANGELOG date), pitfall 7 in `setapp-framework`, and the "Verified against" line in `README.md`.
+- Bump the version everywhere it's stated as current: the `Version:` line and both SPM/xcodegen `from:` pins in `setapp-framework`, the `Latest is **x.y.z** (date)` line in `setapp-ai` (date = the tag's CHANGELOG date), pitfall 7 in `setapp-framework` (`Use x.y.z (or current latest)`), and the "Verified against" line in `README.md`. The workflow runs `.github/sdk-sync/check-sync.sh` afterwards and fails if any of these, the plugin version bump, or the changelog entry is missing — you can run it yourself to check.
 - Add every new feature to the version-floor tables in **both** skills with its minimum version.
 - **Breaking changes** go in the `Breaking change in x.y.z` callouts under Step 3 of `setapp-framework`, plus a Common Pitfalls entry. Say when a break is silent (compiles but behaves differently) — those matter most.
 - **Deprecations with a removal date**: put a ⚠️ callout near the top of the affected skill, a migration note in the relevant section, and a pitfall. Rewrite samples to the replacement API — never leave a sample on a deprecated call.
@@ -24,16 +24,14 @@ Follow `CONTRIBUTING.md`. In particular:
 - If a change touches review/submission requirements (entitlements, Info.plist, deployment target), update the Step 14 scan and the Step 15 checklist too.
 - Keep existing structure, step numbering, and voice. Don't rewrite unrelated text.
 
-## 3. Type-check every snippet you added or changed
+## 3. Check every documented API against the published interfaces
 
-The xcframework slice has the Swift modules, so snippets can be type-checked without linking:
+Don't compile anything — testing the SDK is the SDK team's job. Instead, verify the documentation against the `.swiftinterface` files in `<fw>/Setapp.xcframework` (macOS slice for macOS snippets, `ios-arm64` for iOS-only ones):
 
-```bash
-SLICE=<fw>/Setapp.xcframework/macos-arm64_x86_64
-swiftc -typecheck -target arm64-apple-macos12.0 -I "$SLICE" snippet.swift
-```
-
-Wrap each snippet in the minimum scaffolding it needs (`import Setapp`, `import SetappAI`, `import AppKit`, an `async throws` function, stub `let`s for placeholders like `models`, `clientId`, `destinationURL`). Use the `-target` floor from the new interface file. Fix the skill — not the scaffolding — until it type-checks. Snippets that are intentionally partial (e.g. a `switch` fragment) may be checked inside a larger wrapper. Skip `iOS`-only snippets on macOS and say so.
+- For every snippet you added or changed, list each SDK symbol it uses — types, methods with their argument labels, initializer parameters, enum cases, properties — and `grep` the interface for each one. The exact labels and parameter order must match.
+- Check that nothing a snippet calls is marked `deprecated` or `unavailable` in the new interface, unless the text is explicitly about migrating away from it.
+- Check that version floors you wrote are right: for each new symbol, find the first tag where it appears (`git -C <fw> show <tag>:<interface path> | grep …`).
+- Fix the skill until every symbol checks out. If something can't be settled from the interface (behavior, defaults, server-side limits), say so in the report rather than guessing.
 
 ## 4. Changelog and version
 
@@ -48,7 +46,7 @@ Write the PR description to the report path given in the prompt:
 - **Time-sensitive** section first if anything has a removal date.
 - Breaking changes, flagging any **not in the release notes** (found via the interface diff).
 - New coverage, and other changes.
-- **Verification**: which snippets type-checked, which didn't or were skipped and why. Snippets aren't run against a live Setapp account — say so.
-- **Needs a human**: anything ambiguous or behavioral that a type-check can't settle.
+- **Verification**: which snippets were checked symbol-by-symbol against the interfaces, and anything that couldn't be. Nothing is compiled or run against a live Setapp account — say so.
+- **Needs a human**: anything ambiguous or behavioral that the interfaces can't settle.
 
 Don't commit, push, or open the PR yourself — the workflow does that.
