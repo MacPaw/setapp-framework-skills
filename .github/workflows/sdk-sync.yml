@@ -130,13 +130,20 @@ jobs:
         env:
           KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          set -uo pipefail
+          set +e -u   # Actions runs with -e; handle grep's exit status ourselves
           [ -n "$KEY" ] || { echo "::error::ANTHROPIC_API_KEY is empty"; exit 1; }
-          # Every file in the working tree (tracked or new) and the PR description
-          if grep -rIlF --exclude-dir=.git -- "$KEY" . "$RUNNER_TEMP/report.md"; then
-            echo "::error::The Anthropic key appears in the files above. Not opening a PR."; exit 1
-          fi
-          echo "ok    key not present in changes or report"
+          [ -f "$RUNNER_TEMP/report.md" ] || { echo "::error::Report missing; cannot scan the PR description"; exit 1; }
+          # Every file in the working tree (tracked or new, text or binary) and the
+          # PR description. -a scans binary content; -l prints file names only,
+          # never the matching content.
+          grep -rlaF --exclude-dir=.git -- "$KEY" . "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/leaks.txt"
+          rc=$?
+          case $rc in
+            0) echo "::error::The Anthropic key appears in these files. Not opening a PR:"
+               cat "$RUNNER_TEMP/leaks.txt"; exit 1 ;;
+            1) echo "ok    key not present in changes or report" ;;
+            *) echo "::error::Secret scan failed (grep exit $rc). Not opening a PR."; exit 1 ;;
+          esac
 
       - name: Open PR
         uses: peter-evans/create-pull-request@v7
