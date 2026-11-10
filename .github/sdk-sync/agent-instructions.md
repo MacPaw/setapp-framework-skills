@@ -10,13 +10,13 @@ You are updating `skills/setapp-framework/SKILL.md` and `skills/setapp-ai/SKILL.
   - removed or renamed `public` symbols, changed signatures, new `@available(*, deprecated…)` / `unavailable`,
   - changed class hierarchy or protocol conformances (`NSObject`, `Sendable`, `Codable`),
   - new members on `SetappManager`, `SetappAIAPI`, and the `*APIProtocol` types.
-- Make a list: each change → version it arrived in (check intermediate tags with `git -C <fw> show <tag>:<path>` when several releases are covered) → which skill it affects.
+- Make a list: each change → version it arrived in (when several releases are covered, check the per-tag interface files the prompt provides) → which skill it affects.
 
 ## 2. Edit the skills
 
-Follow `CONTRIBUTING.md`. In particular:
+Follow `CONTRIBUTING.md`. Edit only `skills/**`, `README.md`, `CHANGELOG.md` and `.claude-plugin/plugin.json` — the workflow rejects changes to anything else. In particular:
 
-- Bump the version everywhere it's stated as current: the `Version:` line and both SPM/xcodegen `from:` pins in `setapp-framework`, the `Latest is **x.y.z** (date)` line in `setapp-ai` (date = the tag's CHANGELOG date), pitfall 7 in `setapp-framework` (`Use x.y.z (or current latest)`), and the "Verified against" line in `README.md`. The workflow runs `.github/sdk-sync/check-sync.sh` afterwards and fails if any of these, the plugin version bump, or the changelog entry is missing — you can run it yourself to check.
+- Bump the version everywhere it's stated as current: the `Version:` line and both SPM/xcodegen `from:` pins in `setapp-framework`, the `Latest is **x.y.z** (date)` line in `setapp-ai` (date = the tag's CHANGELOG date), pitfall 7 in `setapp-framework` (`Use x.y.z (or current latest)`), and the "Verified against" line in `README.md`. The workflow runs `.github/sdk-sync/check-sync.sh` afterwards and fails if any of these, the plugin version bump, or the changelog entry is missing.
 - Add every new feature to the version-floor tables in **both** skills with its minimum version.
 - **Breaking changes** go in the `Breaking change in x.y.z` callouts under Step 3 of `setapp-framework`, plus a Common Pitfalls entry. Say when a break is silent (compiles but behaves differently) — those matter most.
 - **Deprecations with a removal date**: put a ⚠️ callout near the top of the affected skill, a migration note in the relevant section, and a pitfall. Rewrite samples to the replacement API — never leave a sample on a deprecated call.
@@ -30,7 +30,7 @@ Don't compile anything — testing the SDK is the SDK team's job. Instead, verif
 
 - For every snippet you added or changed, list each SDK symbol it uses — types, methods with their argument labels, initializer parameters, enum cases, properties — and `grep` the interface for each one. The exact labels and parameter order must match.
 - Check that nothing a snippet calls is marked `deprecated` or `unavailable` in the new interface, unless the text is explicitly about migrating away from it.
-- Check that version floors you wrote are right: for each new symbol, find the first tag where it appears (`git -C <fw> show <tag>:<interface path> | grep …`).
+- Check that version floors you wrote are right: for each new symbol, find the first tag where it appears by grepping the per-tag interface files.
 - Fix the skill until every symbol checks out. If something can't be settled from the interface (behavior, defaults, server-side limits), say so in the report rather than guessing.
 
 ## 4. Changelog and version
