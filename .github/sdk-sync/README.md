@@ -4,27 +4,30 @@ The skills document a specific Setapp-framework version. When a newer one ships,
 
 ## How it runs
 
-The workflow lives in the private **`MacPaw/setapp-ios`** repo (`.github/workflows/setapp-skills-sync.yml`), not here, so the Anthropic API key never touches this public repo. The framework's release pipeline calls it after the new version is deployed to the public `MacPaw/Setapp-framework` repo. It:
+[`.github/workflows/sdk-sync.yml`](../workflows/sdk-sync.yml) runs daily and on demand (Actions → *SDK sync* → *Run workflow*, optionally with a version). It has three jobs:
 
-1. checks out this repo with a GitHub App token, and stops if the skills already document that version or an `sdk-sync/*` PR is still open;
-2. fetches the framework and diffs the CHANGELOG **and** the published `.swiftinterface` files between the documented and the new version — release notes aren't exhaustive;
-3. runs Claude with [`agent-instructions.md`](agent-instructions.md): update both skills, README, CHANGELOG and plugin version, and check every documented API against the interfaces (nothing is compiled — testing the SDK is the SDK team's job);
-4. runs [`check-sync.sh`](check-sync.sh), which fails unless every current-version statement, both dependency pins, the plugin version bump and the CHANGELOG entry are in place;
-5. opens a PR on branch `sdk-sync/<version>`, labelled `sdk-sync`, with the agent's report as the description.
+1. **`detect`** reads the documented version and the latest public `MacPaw/Setapp-framework` tag. It stops if the skills are already current or an `sdk-sync/*` PR is still open.
+2. **`agent`** pre-extracts the CHANGELOG diff, the `.swiftinterface` diff and the per-tag interface files, then runs Claude with [`agent-instructions.md`](agent-instructions.md). It uploads the resulting patch and report as a one-day artifact.
+3. **`publish`** applies the patch to a fresh checkout of `main` and runs [`check-sync.sh`](check-sync.sh), which fails unless every current-version statement, both dependency pins, the plugin version bump and the CHANGELOG entry are in place. Then it opens a signed PR on branch `sdk-sync/<version>`, labelled `sdk-sync`, with the agent's report as the description.
 
-## Requirements for the workflow
+## How the key is protected
 
-The agent reads framework release content, so treat its output as untrusted. The setapp-ios workflow must:
+This repo is public, so the setup keeps the Anthropic key away from anything outside `main`:
 
-- give the agent only `Read`, `Glob`, `Grep`, `Edit` and `Write` — no `Bash`. Pre-extract anything it needs from the framework (diffs, per-tag `.swiftinterface` files) before the agent runs;
-- keep the GitHub App token out of the agent step: check out with `persist-credentials: false` and create the token only in the step that opens the PR;
-- reject the run if the agent changed anything outside `skills/**`, `README.md`, `CHANGELOG.md` and `.claude-plugin/plugin.json`;
-- run `check-sync.sh` from this repo's `main`, not from the agent's working tree;
-- accept only versions matching `^[0-9]+\.[0-9]+\.[0-9]+$`.
+- **Environment.** `ANTHROPIC_API_KEY` is a secret of the `sdk-sync` environment, not a repository secret. The environment accepts deployments from `main` only, and only the `agent` job uses it. The key is a dedicated one with a spend limit. SRE manages the environment and the secret (Vault → vault-fusion) in `MacPaw/ops-macpaw-io`.
+- **Triggers.** Only `schedule` (runs from `main`) and `workflow_dispatch` (needs write access). There is no `pull_request`, `pull_request_target` or `issue_comment` trigger, and workflow runs from forks need maintainer approval.
+- **Tokens.** The default `GITHUB_TOKEN` is read-only. `agent` gets `contents: read` and checks out with `persist-credentials: false`. Only `publish` can write, and it never sees the key.
+- **Agent.** It may use only `Read`, `Glob`, `Grep`, `Edit` and `Write`: no `Bash`, no web access, no reads under `/proc`. Its output is untrusted, so:
+  - the run fails if the agent changed anything outside `skills/**`, `README.md`, `CHANGELOG.md` and `.claude-plugin/plugin.json`;
+  - `publish` rejects executables, symlinks and submodules, and runs the copy of `check-sync.sh` it took from `main` before applying the patch;
+  - the patch and the report are scanned for the key before upload (the artifact and the logs are public), then again for any `sk-ant-` key before the PR opens;
+  - versions must match `^[0-9]+\.[0-9]+\.[0-9]+$`.
+
+Commits go through the GitHub API (`sign-commits`), because the org requires signed commits on every branch.
 
 ## Reviewing an `sdk-sync` PR
 
-Review the full diff, not only the report. Close the PR if it touches anything outside `skills/**`, `README.md`, `CHANGELOG.md` and `.claude-plugin/plugin.json` — a new `.mcp.json`, hook, agent or command would ship to everyone who installs the plugin.
+Review the full diff, not only the report. Close the PR if it touches anything outside `skills/**`, `README.md`, `CHANGELOG.md` and `.claude-plugin/plugin.json`: a new `.mcp.json`, hook, agent or command would ship to everyone who installs the plugin.
 
 Then check the report for:
 
@@ -32,11 +35,11 @@ Then check the report for:
 - anything under **Needs a human**;
 - whether the new examples make sense for a real app.
 
-Push fixes to the same branch, or ask for changes and re-run the workflow by hand from `setapp-ios` (Actions → *Sync Setapp skills* → *Run workflow*, with the version).
+Push fixes to the same branch, or close the PR and run the workflow again by hand with the version.
 
 ## Running it by hand
 
-Without the pipeline, run Claude in a clone of this repo with:
+Without the workflow, run Claude in a clone of this repo with:
 
 ```
 Update the Setapp skills from Setapp-framework <current> to <new>. Follow .github/sdk-sync/agent-instructions.md:
