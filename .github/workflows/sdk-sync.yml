@@ -97,6 +97,11 @@ jobs:
           done < "$WORK/in/tags.txt"
           wc -l "$WORK"/in/*.diff "$WORK/in/tags.txt"
 
+      # The agent could plant git config (core.fsmonitor, filters) that would run code
+      # in this job, which holds the key. Git commands after the agent use this copy.
+      - name: Keep a copy of .git outside the agent's reach
+        run: cp -a .git "$RUNNER_TEMP/git"
+
       - name: Run the update agent
         uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
         with:
@@ -113,11 +118,12 @@ jobs:
             --max-turns 120
             --add-dir ${{ env.WORK }}
             --allowedTools "Read,Glob,Grep,Edit,Write"
-            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**)"
+            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Edit(**/.git/**),Write(**/.git/**)"
 
       - name: Reject changes outside the allowed paths
         run: |
           set -euo pipefail
+          export GIT_DIR="$RUNNER_TEMP/git" GIT_WORK_TREE="$PWD" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
           git status --porcelain=v1 --untracked-files=all -z | tr '\0' '\n' | grep -v '^$' > "$WORK/status.txt" || true
           [ -s "$WORK/status.txt" ] || { echo "::error::The agent changed nothing"; exit 1; }
           cut -c4- "$WORK/status.txt" > "$WORK/paths.txt"
@@ -125,8 +131,8 @@ jobs:
             echo "::error::The agent changed files outside the allowlist (listed above)"; exit 1
           fi
           git add -A
-          git diff --cached --binary > "$WORK/out/changes.patch"
-          git diff --cached --stat
+          git diff --cached --binary --no-ext-diff --no-textconv > "$WORK/out/changes.patch"
+          git diff --cached --stat --no-ext-diff --no-textconv
 
       - name: Make sure the key is not in the patch or the report
         env:

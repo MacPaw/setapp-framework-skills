@@ -16,10 +16,12 @@ This repo is public, so the setup keeps the Anthropic key away from anything out
 
 - **Environment.** `ANTHROPIC_API_KEY` is a secret of the `sdk-sync` environment, not a repository secret. The environment accepts deployments from `main` only, and only the `agent` job uses it. The key is a dedicated one with a spend limit. SRE manages the environment and the secret (Vault → vault-fusion) in `MacPaw/ops-macpaw-io`.
 - **Triggers.** Only `schedule` (runs from `main`) and `workflow_dispatch` (needs write access). There is no `pull_request`, `pull_request_target` or `issue_comment` trigger, and workflow runs from forks need maintainer approval.
+- **Code owners.** `/.github/` is owned by `@MacPaw/prnd`. GitHub Actions may open and approve PRs here, so without a code-owner review an Actions approval could merge a workflow change to `main` and reach the key.
 - **Tokens.** The default `GITHUB_TOKEN` is read-only. `agent` gets `contents: read` and checks out with `persist-credentials: false`. Only `publish` can write, and it never sees the key.
 - **Agent.** It may use only `Read`, `Glob`, `Grep`, `Edit` and `Write`: no `Bash`, no web access, no reads under `/proc`. Its output is untrusted, so:
   - the run fails if the agent changed anything outside `skills/**`, `README.md`, `CHANGELOG.md` and `.claude-plugin/plugin.json`;
-  - `publish` rejects executables, symlinks and submodules, and runs the copy of `check-sync.sh` it took from `main` before applying the patch;
+  - the agent can't edit `.git`, and the git commands after it use a copy of `.git` taken before it ran, so planted git config (hooks, filters, `core.fsmonitor`) can't run code in the job that holds the key;
+  - `publish` rejects executables, symlinks and submodules, and saves `check-sync.sh` from `main` before applying the patch, then runs that copy;
   - the patch and the report are scanned for the key before upload (the artifact and the logs are public), then again for any `sk-ant-` key before the PR opens;
   - versions must match `^[0-9]+\.[0-9]+\.[0-9]+$`.
 
