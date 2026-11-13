@@ -1,0 +1,228 @@
+name: SDK sync
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Setapp-framework tag to sync to (blank = latest)"
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: sdk-sync
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      current: ${{ steps.v.outputs.current }}
+      target: ${{ steps.v.outputs.target }}
+      run: ${{ steps.v.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          current=$(grep -oE 'Latest is \*\*[0-9]+\.[0-9]+\.[0-9]+\*\*' skills/setapp-ai/SKILL.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          tags=$(git ls-remote --tags --refs https://github.com/MacPaw/Setapp-framework.git | awk -F/ '{print $3}' | grep -E "$semver" | sort -V)
+          target=${REQUESTED:-$(tail -1 <<<"$tags")}
+          if [[ ! $current =~ $semver || ! $target =~ $semver ]]; then
+            echo "::error::Versions must be x.y.z (current '$current', target '$target')"; exit 1
+          fi
+          grep -qxF -- "$target" <<<"$tags" || { echo "::error::Setapp-framework has no tag $target"; exit 1; }
+          echo "current=$current target=$target"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+
+          run=true
+          if [ "$(printf '%s\n%s\n' "$current" "$target" | sort -V | tail -1)" = "$current" ]; then
+            echo "Skills already document $current, nothing to do."; run=false
+          elif gh pr list --repo "$GITHUB_REPOSITORY" --state open --json headRefName -q '.[].headRefName' | grep -q '^sdk-sync/'; then
+            echo "An sdk-sync PR is already open, skipping until it is merged or closed."; run=false
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  agent:
+    needs: detect
+    if: needs.detect.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    environment: sdk-sync
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CURRENT: ${{ needs.detect.outputs.current }}
+      TARGET: ${{ needs.detect.outputs.target }}
+    steps:
+      - run: echo "WORK=$RUNNER_TEMP/sdk-sync" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Extract framework changes
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORK/in/interfaces" "$WORK/out"
+          fw="$WORK/in/fw"
+          git clone --quiet --filter=blob:limit=50m https://github.com/MacPaw/Setapp-framework.git "$fw"
+          git -C "$fw" checkout --quiet "$TARGET"
+          git -C "$fw" diff "$CURRENT" "$TARGET" -- CHANGELOG.md > "$WORK/in/changelog.diff"
+          git -C "$fw" diff "$CURRENT" "$TARGET" -- \
+            'Setapp.xcframework/macos-arm64_x86_64/*/arm64-apple-macos.swiftinterface' \
+            'Setapp.xcframework/ios-arm64/*/arm64-apple-ios.swiftinterface' > "$WORK/in/interface.diff"
+          git -C "$fw" tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V \
+            | awk -v c="$CURRENT" -v t="$TARGET" '$0==c{on=1} on{print} $0==t{exit}' > "$WORK/in/tags.txt"
+          while read -r tag; do
+            git -C "$fw" ls-tree -r --name-only "$tag" -- Setapp.xcframework \
+              | grep -E 'arm64-apple-(macos|ios)\.swiftinterface$' \
+              | while read -r path; do
+                  mkdir -p "$WORK/in/interfaces/$tag/$(dirname "$path")"
+                  git -C "$fw" show "$tag:$path" > "$WORK/in/interfaces/$tag/$path"
+                done
+          done < "$WORK/in/tags.txt"
+          wc -l "$WORK"/in/*.diff "$WORK/in/tags.txt"
+
+      # The agent could plant git config (core.fsmonitor, filters) that would run code
+      # in this job, which holds the key. Git commands after the agent use this copy.
+      - name: Keep a copy of .git outside the agent's reach
+        run: cp -a .git "$RUNNER_TEMP/git"
+
+      - name: Run the update agent
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Update this repository's Setapp skills from Setapp-framework ${{ env.CURRENT }} to ${{ env.TARGET }}.
+            Framework checkout at the new tag: ${{ env.WORK }}/in/fw
+            CHANGELOG diff: ${{ env.WORK }}/in/changelog.diff
+            Swift interface diff: ${{ env.WORK }}/in/interface.diff
+            Per-tag interface files: ${{ env.WORK }}/in/interfaces/<tag>/ for every tag listed in ${{ env.WORK }}/in/tags.txt
+            Follow .github/sdk-sync/agent-instructions.md exactly. Write your report to ${{ env.WORK }}/out/report.md.
+          claude_args: >-
+            --max-turns 120
+            --add-dir ${{ env.WORK }}
+            --allowedTools "Read,Glob,Grep,Edit,Write"
+            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Edit(**/.git/**),Write(**/.git/**)"
+
+      - name: Reject changes outside the allowed paths
+        run: |
+          set -euo pipefail
+          export GIT_DIR="$RUNNER_TEMP/git" GIT_WORK_TREE="$PWD" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+          git status --porcelain=v1 --untracked-files=all -z | tr '\0' '\n' | grep -v '^$' > "$WORK/status.txt" || true
+          [ -s "$WORK/status.txt" ] || { echo "::error::The agent changed nothing"; exit 1; }
+          cut -c4- "$WORK/status.txt" > "$WORK/paths.txt"
+          if grep -vE '^(skills/.+|README\.md|CHANGELOG\.md|\.claude-plugin/plugin\.json)$' "$WORK/paths.txt"; then
+            echo "::error::The agent changed files outside the allowlist (listed above)"; exit 1
+          fi
+          git add -A
+          git diff --cached --binary --no-ext-diff --no-textconv > "$WORK/out/changes.patch"
+          git diff --cached --stat --no-ext-diff --no-textconv
+
+      - name: Make sure the key is not in the patch or the report
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +e -u
+          [ -n "$KEY" ] || { echo "::error::ANTHROPIC_API_KEY is empty"; exit 1; }
+          [ -s "$WORK/out/report.md" ] || { echo "::error::Report missing"; exit 1; }
+          grep -laF -- "$KEY" "$WORK/out/changes.patch" "$WORK/out/report.md" > "$WORK/leaks.txt"
+          rc=$?
+          case $rc in
+            0) echo "::error::The Anthropic key appears in these files, not publishing:"; cat "$WORK/leaks.txt"; exit 1 ;;
+            1) echo "ok    key not present in the patch or the report" ;;
+            *) echo "::error::Secret scan failed (grep exit $rc), not publishing"; exit 1 ;;
+          esac
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-sync
+          path: |
+            ${{ env.WORK }}/out/changes.patch
+            ${{ env.WORK }}/out/report.md
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [detect, agent]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      TARGET: ${{ needs.detect.outputs.target }}
+    steps:
+      - run: echo "WORK=$RUNNER_TEMP/sdk-sync" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keep the guard from main
+        run: |
+          mkdir -p "$WORK/guard"
+          cp .github/sdk-sync/check-sync.sh "$WORK/guard/check-sync.sh"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdk-sync
+          path: ${{ env.WORK }}/in
+
+      - name: Apply the patch to allowed paths only
+        run: |
+          set -euo pipefail
+          git apply --check "$WORK/in/changes.patch"
+          git apply --index "$WORK/in/changes.patch"
+          git diff --cached --name-only --no-renames > "$WORK/paths.txt"
+          if grep -vE '^(skills/.+|README\.md|CHANGELOG\.md|\.claude-plugin/plugin\.json)$' "$WORK/paths.txt"; then
+            echo "::error::The patch touches files outside the allowlist (listed above)"; exit 1
+          fi
+          if git diff --cached --raw --no-renames | awk '{print $2}' | grep -vE '^(000000|100644)$'; then
+            echo "::error::The patch adds executables, symlinks or submodules"; exit 1
+          fi
+          git diff --cached --stat
+
+      - name: Make sure no Anthropic key is in the patch or the report
+        run: |
+          set +e -u
+          grep -laE 'sk-ant-[A-Za-z0-9_-]{16,}' "$WORK/in/changes.patch" "$WORK/in/report.md" > "$WORK/leaks.txt"
+          rc=$?
+          case $rc in
+            0) echo "::error::An Anthropic key pattern appears in these files, not publishing:"; cat "$WORK/leaks.txt"; exit 1 ;;
+            1) echo "ok    no key pattern" ;;
+            *) echo "::error::Secret scan failed (grep exit $rc), not publishing"; exit 1 ;;
+          esac
+
+      - name: Check every version statement and release note
+        run: bash "$WORK/guard/check-sync.sh" "$TARGET" "$GITHUB_SHA" "$WORK/in/report.md"
+
+      - uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
+        with:
+          token: ${{ github.token }}
+          sign-commits: true
+          branch: sdk-sync/${{ env.TARGET }}
+          delete-branch: true
+          add-paths: |
+            skills
+            README.md
+            CHANGELOG.md
+            .claude-plugin/plugin.json
+          commit-message: "Update skills for Setapp-framework ${{ env.TARGET }}"
+          title: "Update skills for Setapp-framework ${{ env.TARGET }}"
+          body-path: ${{ env.WORK }}/in/report.md
+          labels: sdk-sync
