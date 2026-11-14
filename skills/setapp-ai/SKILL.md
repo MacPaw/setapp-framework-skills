@@ -40,7 +40,7 @@ If not found, tell the user: **"The Setapp Framework isn't integrated yet. Use t
 | Text-to-speech (`ai.audio.voices`, `ai.audio.speech`) | 5.5.2 |
 | **v2** transcription (`transcribeV2` …) and video (`generateV2` …), `Model.params` | 5.5.4 |
 
-Latest is **5.5.5** (2026-10-30). If `Package.resolved` pins something older, bump it before writing against these APIs — the failure mode is a "no member" compile error that reads like a typo.
+Latest is **5.5.6** (2026-11-10). If `Package.resolved` pins something older, bump it before writing against these APIs — the failure mode is a "no member" compile error that reads like a typo.
 
 > ⚠️ **v1 transcription and video endpoints are scheduled for removal around 20 November 2026.** Any `ai.audio.transcribe*` (without `V2`) or `ai.videos.generate` / `retrieve` / `content` call will start failing at runtime once the server side is removed — the deprecation warning is the only compile-time signal. Migrate to the v2 calls in "Beyond Text" below.
 

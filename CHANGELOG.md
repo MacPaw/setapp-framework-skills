@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.0 — 2026-11-14
+
+Updated both skills from Setapp-framework 5.5.5 to **5.5.6**. 5.5.6 is a bug-fix release: the public `.swiftinterface` files (Setapp and SetappAI, macOS and iOS) are unchanged from 5.5.5, including deployment targets.
+
+### Breaking changes
+
+- None. No public API, deployment-target, or conformance changes in 5.5.6.
+
+### Added
+
+- `setapp-framework` Testing section: if Debug/test runs from Xcode fail the integrity check, check the pin — fixed in 5.5.6. Also notes the 5.5.6 fix for the Local Network prompt in Mac Catalyst apps on macOS 15+.
+- Version-floor row in `setapp-framework` for the 5.5.6 fixes.
+
+### Changed
+
+- SPM/xcodegen pins, the `Version:` line, the SPM-version pitfall, `setapp-ai`'s "Latest is" line, and the README "Verified against" line bumped to 5.5.6.
+
 ## 1.2.0 — 2026-11-04
 
 Updated both skills from Setapp-framework 5.3.6 to **5.5.5**, covering 5.4.0 through 5.5.5. Signatures were checked against the shipped `.swiftinterface` files, not just the release notes — 5.5.4 contains breaking changes the notes don't mention.
