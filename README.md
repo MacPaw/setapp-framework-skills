@@ -11,7 +11,7 @@ Two skills, in order:
 
 `setapp-ai` assumes `setapp-framework` is already done.
 
-> Verified against **Setapp-framework 5.5.5** and the Setapp docs as of **4 November 2026**. Both skills carry version-floor tables; check [releases](https://github.com/MacPaw/Setapp-framework/releases) if you're on a newer SDK.
+> Verified against **Setapp-framework 5.5.6** (interfaces checked 14 November 2026) and the Setapp docs as of **4 November 2026**. Both skills carry version-floor tables; check [releases](https://github.com/MacPaw/Setapp-framework/releases) if you're on a newer SDK.
 
 ## Why use these
 

@@ -53,7 +53,7 @@ If using a standard Xcode project: Duplicate the existing macOS target and renam
 Add the Setapp Framework via Swift Package Manager:
 
 - **URL:** `https://github.com/MacPaw/Setapp-framework.git`
-- **Version:** From `5.5.5` (latest as of 2026-11-04 — always check [releases](https://github.com/MacPaw/Setapp-framework/releases))
+- **Version:** From `5.5.6` (latest as of 2026-11-14 — always check [releases](https://github.com/MacPaw/Setapp-framework/releases))
 
 > **Version floors.** `5.1.0` still works for plain licensing, but take the latest unless you have a reason not to. Features gated on newer releases:
 >
@@ -69,6 +69,7 @@ Add the Setapp Framework via Swift Package Manager:
 > | `requestPendingUpdate` / `applyPendingUpdate` (macOS) | 5.5.0 |
 > | Credits purchase URL with `returnURL:` | 5.5.1 |
 > | AI text-to-speech (`ai.audio.speech`) | 5.5.2 |
+> | Xcode Debug/test runs pass the integrity check; no Local Network prompt in Mac Catalyst apps on macOS 15+ (fixes) | 5.5.6 |
 >
 > **Breaking change in 5.3.6:** `requestAuthorizationCode` no longer takes a `scope` argument — the framework now applies the `application.access` scope itself, and `VendorAuthorizationScope` / `SCVendorAppScope` are no longer public. If the app calls it, change to `requestAuthorizationCode(clientID:completionHandler:)`.
 >
@@ -88,7 +89,7 @@ dependencies: [
     .package(
         name: "Setapp",
         url: "https://github.com/MacPaw/Setapp-framework.git",
-        from: "5.5.5"
+        from: "5.5.6"
     )
 ]
 ```
@@ -99,7 +100,7 @@ If using xcodegen (`project.yml`):
 packages:
   Setapp:
     url: https://github.com/MacPaw/Setapp-framework.git
-    from: "5.5.5"
+    from: "5.5.6"
 ```
 
 Link only to the Setapp target:
@@ -534,6 +535,8 @@ If you see "This copy of [App] requires an active Setapp account installed on yo
 - **Second check:** Is the bundle ID registered in the Setapp developer portal?
 - **Third check:** Is the Setapp desktop app running and logged in?
 
+If Debug or test runs launched from Xcode fail the framework's integrity check while the checks above pass, check the pinned version: that was a framework bug fixed in **5.5.6**. Bump the pin before changing signing or entitlements. (Separately, 5.5.6 also stops Mac Catalyst apps from showing the Local Network permission prompt on macOS 15+.)
+
 Reference: https://docs.setapp.com/docs/testing-your-application
 
 ## Common Pitfalls
@@ -544,7 +547,7 @@ Reference: https://docs.setapp.com/docs/testing-your-application
 4. **Icon named after the app** — the standalone icon must be `AppIcon.png` exactly, 1024×1024, in the zip next to the `.app`. Naming it `<AppName>.png` fails the upload, and Xcode caps standalone icon export at 256px unless `ASSETCATALOG_COMPILER_STANDALONE_ICON_BEHAVIOR = all`.
 5. **App name collision in App Store Connect** — Use "AppName (Setapp)" for the ASC record name.
 6. **Finder-compressed archive** — right-click > Compress adds `__MACOSX`, which fails validation. Pack with `ditto`/`zip -r` and verify by unpacking.
-7. **SPM version** — The docs' install page still shows `from: "4.2.1"`; that's stale. Use 5.5.5 (or current latest). Older pins silently lack the AI, credits, links, and image/audio/video/speech APIs.
+7. **SPM version** — The docs' install page still shows `from: "4.2.1"`; that's stale. Use 5.5.6 (or current latest). Older pins silently lack the AI, credits, links, and image/audio/video/speech APIs.
 8. **KVO on `SetappManager` after 5.5.4** — `SetappManager` is no longer an `NSObject`, so `observe(\.subscription, …)` stops compiling. Use `SetappManager.shared.publisher(for: \.subscription)` (Combine) or `didChangeSubscriptionNotification`. Don't migrate to a delegate: on macOS `SetappManager` has no `delegate` property, only the deprecated `STPManager` shim does.
 9. **`disable-library-validation` entitlement** — from 5.5.4 it makes the startup integrity check fail for non-Electron apps, which presents as an activation failure. Remove it from the Setapp target.
 10. **Old `SetappError` codes (iOS)** — `.blocked` / `.blockedAfterTrial` and raw codes 1708/1709 are gone since 5.4.0; use `.inactiveLicense` / `.trialAlreadyUsed` (1710/1711). Raw-number checks compile and silently never match.
